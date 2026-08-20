@@ -1,0 +1,34 @@
+# dsh-claude-driver 宿主补丁模板。
+# 把下面内容合并进 ~/.dsh/profiles/<profile>/cordis.patch.yml
+# （DSH Desktop 应用 → desktop profile；dsh web CLI → web profile）。
+# 注意：patch 的 config 是【整体替换】不是合并，须保留你要的全部字段。
+# proxy 是机器相关的，务必改成你本机的代理地址；不用代理则删掉该行。
+# timeoutMs 为 claude_code 委派工具的硬超时；maxTurns 是主模型每步内部循环上限。
+
+# ── 若尚未装 dsh-claude-code（委派工具），先装它并配置 proxy/model ──
+# - id: claude-code
+#   name: dsh-claude-code
+#   config:
+#     model: fable
+#     permissionMode: acceptEdits
+#     maxTurns: 100
+#     timeoutMs: 3600000
+#     proxy: http://127.0.0.1:7897
+
+# ── dsh-claude-driver：主模型接管 + 工具桥接 + subagent provider ──
+- insert:
+    - id: claude-driver
+      name: dsh-claude-driver
+      config:
+        provider: claude-code
+        model: fable
+        maxTurns: 12
+        permissionMode: acceptEdits
+        proxy: http://127.0.0.1:7897
+        # 可选：自定义目录模型与思考档位
+        # models:
+        #   - { id: fable,  name: Claude Fable,  contextWindow: 200000 }
+        #   - { id: sonnet, name: Claude Sonnet, contextWindow: 200000 }
+        #   - { id: opus,   name: Claude Opus,   contextWindow: 200000 }
+        #   - { id: haiku,  name: Claude Haiku,  contextWindow: 200000 }
+        # efforts: [low, medium, high, max]

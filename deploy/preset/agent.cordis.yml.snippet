@@ -1,0 +1,14 @@
+# 把这两段加进你 agent preset 的 delegation 组（~/.dsh/.agent-presets/<preset>/agent.cordis.yml）。
+# 1) 启用 claude-code subagent 工具（去掉 disabled）
+# 2) 紧随其后加 wakeup 行（把 plugins/dsh-tool-claude-code-wakeup.mjs 放进该 preset 的 plugins/ 目录）
+
+    - id: tool-subagent-claude-code
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: claude-code
+        toolName: subagent_claude_code
+        enableRunInBackground: false
+        maxDepth: provider-managed
+
+    - id: claude-code-wakeup
+      name: './plugins/dsh-tool-claude-code-wakeup.mjs'
