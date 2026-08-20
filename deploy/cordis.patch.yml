@@ -25,10 +25,10 @@
         maxTurns: 100
         permissionMode: acceptEdits
         proxy: http://127.0.0.1:7897
-        # 可选：自定义目录模型与思考档位
+        # 可选：自定义目录模型与思考档位（contextWindow 为真实窗口：fable/opus=1M、sonnet=967k、haiku=200k）
         # models:
-        #   - { id: fable,  name: Claude Fable,  contextWindow: 200000 }
-        #   - { id: sonnet, name: Claude Sonnet, contextWindow: 200000 }
-        #   - { id: opus,   name: Claude Opus,   contextWindow: 200000 }
+        #   - { id: fable,  name: Claude Fable,  contextWindow: 1000000 }
+        #   - { id: sonnet, name: Claude Sonnet, contextWindow: 967000 }
+        #   - { id: opus,   name: Claude Opus,   contextWindow: 1000000 }
         #   - { id: haiku,  name: Claude Haiku,  contextWindow: 200000 }
         # efforts: [low, medium, high, max]

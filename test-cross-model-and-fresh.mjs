@@ -230,9 +230,10 @@ const toolSchemas = [
     {},
   )
   assert.equal(captured.length, 1)
+  const expectedWindows = { fable: 1000000, sonnet: 967000, opus: 1000000, haiku: 200000 }
   for (const id of ['fable', 'sonnet', 'opus', 'haiku']) {
     const resolved = await captured[0].resolveModel('claude-code', id)
-    assert.deepEqual(resolved.context, { contextWindow: 200000 }, `${id} exposes context.contextWindow (compaction-basic requirement)`)
+    assert.deepEqual(resolved.context, { contextWindow: expectedWindows[id] }, `${id} exposes the real context.contextWindow (probed via getContextUsage)`)
   }
 }
 
