@@ -22,7 +22,7 @@
       config:
         provider: claude-code
         model: fable
-        maxTurns: 12
+        maxTurns: 100
         permissionMode: acceptEdits
         proxy: http://127.0.0.1:7897
         # 可选：自定义目录模型与思考档位
