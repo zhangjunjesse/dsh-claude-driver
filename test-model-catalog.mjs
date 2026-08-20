@@ -69,6 +69,54 @@ const richFable = await richAdapter.resolveModel('claude-code', 'fable')
 assert.deepEqual(richFable.context, { contextWindow: 200000 })
 assert.equal(richFable.defaultMaxTokens, 64000)
 
+// --- adapter: per-model effort overrides (③⑤ 2026-08-20) ---
+{
+  const perModel = createClaudeCodeAdapter({
+    ...settings,
+    effort: 'medium',
+    efforts: ['low', 'medium', 'high', 'max'],
+    models: [
+      { id: 'fable', efforts: ['medium', 'high', 'max'], defaultEffort: 'max' }, // full override
+      { id: 'opus', effort: 'high' },                                            // default level only
+      { id: 'haiku', efforts: false },                                           // reasoning off for this model
+      'sonnet',                                                                   // no per-model config
+    ],
+  })
+  // normalizeModels passes the fields through
+  const norm = normalizeModels([{ id: 'fable', efforts: ['high'], effort: 'high', defaultEffort: 'max' }])
+  assert.deepEqual(norm[0].efforts, ['high'], 'efforts passed through')
+  assert.equal(norm[0].effort, 'high', 'effort passed through')
+  assert.equal(norm[0].defaultEffort, 'max', 'defaultEffort passed through')
+
+  const pmFable = await perModel.resolveModel('claude-code', 'fable')
+  assert.deepEqual(pmFable.reasoning.efforts.map((e) => e.id), ['medium', 'high', 'max'], 'per-model efforts vocabulary')
+  assert.equal(pmFable.reasoning.defaultEffort, 'max', 'per-model defaultEffort wins')
+
+  const pmOpus = await perModel.resolveModel('claude-code', 'opus')
+  assert.equal(pmOpus.reasoning.defaultEffort, 'high', 'effort field sets the per-model default')
+  assert.ok(pmOpus.reasoning.efforts.some((e) => e.id === 'high'), 'defaultEffort within efforts (dsh-llm invariant)')
+
+  const pmHaiku = await perModel.resolveModel('claude-code', 'haiku')
+  assert.equal(pmHaiku.reasoning, undefined, 'efforts:false disables reasoning per model')
+
+  const pmSonnet = await perModel.resolveModel('claude-code', 'sonnet')
+  assert.equal(pmSonnet.reasoning.defaultEffort, 'medium', 'unconfigured model falls back to global effort')
+  assert.deepEqual(pmSonnet.reasoning.efforts.map((e) => e.id), ['low', 'medium', 'high', 'max'], 'global efforts fallback')
+
+  const pmUnlisted = await perModel.resolveModel('claude-code', 'claude-x')
+  assert.equal(pmUnlisted.reasoning.defaultEffort, 'medium', 'unlisted model uses global reasoning')
+
+  // force-include invariant survives a per-model default outside its list
+  const forcedPm = createClaudeCodeAdapter({ ...settings, models: [{ id: 'fable', efforts: ['low'], defaultEffort: 'max' }] })
+  const pmForced = await forcedPm.resolveModel('claude-code', 'fable')
+  assert.ok(pmForced.reasoning.efforts.some((e) => e.id === 'max'), 'per-model defaultEffort force-included')
+  assert.equal(pmForced.reasoning.defaultEffort, 'max')
+
+  // discovery output stays in the LlmDiscoveredModel shape (no effort leakage)
+  const pmDiscovered = await createModelDiscovery({ models: [{ id: 'fable', effort: 'max', efforts: ['max'] }] })({})
+  for (const key of Object.keys(pmDiscovered[0])) assert.ok(['id', 'name', 'contextWindow', 'maxTokens'].includes(key), `discovery key ${key}`)
+}
+
 // --- adapter: dead-man stream yields exactly one terminal error chunk ---
 const chunks = []
 for await (const chunk of adapter.stream({ provider: 'claude-code', model: 'fable' })) chunks.push(chunk)

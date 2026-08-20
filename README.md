@@ -80,6 +80,17 @@ npm i --no-save
 | `nativeToolCards` | `true` | 桥接工具原生卡片 |
 | `bridgeTools` | `true` | DSH 工具桥接 |
 | `registerCatalog` | `true` | 进模型选择器 |
+| `approveBuiltinTools` | `false` | 内置工具走 DSH 审批（开启后每个 Bash 弹一次"允许一次"） |
+| `builtinAllowlist` | `['Read','Grep','Glob']` | 开启审批后仍直接放行的只读内置工具 |
+
+## 架构边界（重要，先读）
+
+主模型切成 Claude Code 后，**"模型记忆/上下文归 Claude Code，不归 DSH"**。因此：
+
+- **仍生效**：会话持久化、GUI、工具卡片、工作区/附件、沙箱审批（桥接 DSH 工具）、子代理调度。
+- **半生效**：会话历史/系统提示只在 **fresh 首次调用**传给 Claude；resume 后续轮不重发（Claude 保留自己的记忆）。
+- **基本不生效**：所有靠 `systemPrompt` 注入模型上下文的 DSH 插件（记忆注入、会话级 context、prompt 变量、自动回忆）——DSH 组装的上下文到不了 Claude 眼前。
+- **结论**：想要 DSH 的记忆/上下文生态完整生效 → 用「deepseek 主模型 + Claude Code 委派」；主模型用 Claude Code → 把记忆交给 Claude Code 自己（`CLAUDE.md`、项目记忆等原生能力）。
 
 ## 合规与风险（如实）
 
@@ -102,10 +113,10 @@ node test-cross-model-and-fresh.mjs # 跨模型配对 + 清链/命令
 
 ## 路线图（未做）
 
-- Claude 内置工具纳入 DSH 审批（当前 `acceptEdits` 直接放行，见 `canUseTool`）
-- subagent provider 后台运行（一行配置 `enableRunInBackground: true`）
-- per-model 默认 effort
-- 存量会话（已含孤儿 tool 消息）的跨模型自愈
+- 存量会话（已含孤儿 tool 消息）的跨模型自愈（需 adapter 侧容错）
+- 审批的"会话级总是允许"记忆（wire schema 只支持 allow-once，见 `approveBuiltinTools`）
+- subagent 的 continuable 续接（上游 dsh-subagent descriptor schema 未开放）
+- subagent 路径的内置工具审批（当前只桥了主模型路径）
 
 ## 目录
 
