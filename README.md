@@ -71,7 +71,7 @@ npm i --no-save
 | `model` | `fable` | 默认模型 |
 | `models` | 四个带 contextWindow 的条目 | 选择器目录 |
 | `effort` | `medium` | 思考强度 |
-| `maxTurns` | `12` | 单步内部工具循环上限 |
+| `maxTurns` | `100` | 单步内部工具循环上限 |
 | `permissionMode` | `acceptEdits` | Claude Code 权限模式 |
 | `proxy` | `http://127.0.0.1:7897` | 代理（按机器改） |
 | `resumeChain` | `true` | 复用 Claude 会话 |
