@@ -76,7 +76,7 @@ npm i --no-save
 | `proxy` | `http://127.0.0.1:7897` | 代理（按机器改） |
 | `resumeChain` | `true` | 复用 Claude 会话 |
 | `partialStream` | `true` | token 级流式 |
-| `showToolProgress` | `true` | 内置工具进度旁白 |
+| `showToolProgress` | `false` | 内置工具进度旁白（桥接工具已有卡片，默认关） |
 | `nativeToolCards` | `true` | 桥接工具原生卡片 |
 | `bridgeTools` | `true` | DSH 工具桥接 |
 | `registerCatalog` | `true` | 进模型选择器 |
