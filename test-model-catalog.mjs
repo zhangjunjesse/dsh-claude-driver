@@ -124,6 +124,38 @@ assert.equal(chunks.length, 1)
 assert.equal(chunks[0].type, 'finish')
 assert.equal(chunks[0].reason.kind, 'error')
 
+// --- adapter: prepareCall (DSH 2.0.2 LlmAdapter contract) ---
+// llm.prepareCall (dsh-llm index.js:1498) calls adapter.prepareCall(provider,
+// model, signal) and requires { model, stream } — model goes to
+// normalizeModelInfo (:1499), stream(options) is the dispatch (:1522).
+assert.equal(typeof adapter.prepareCall, 'function', 'prepareCall exists (2.0.2 contract)')
+{
+  const call = await adapter.prepareCall('claude-code', 'fable', undefined)
+  assert.ok(call !== null && typeof call === 'object', 'prepareCall returns an object')
+  assert.equal(typeof call.stream, 'function', 'adapterCall.stream is a function')
+  // adapterCall.model must equal resolveModel's result (same normalizeModelInfo input)
+  assert.deepEqual(call.model, await adapter.resolveModel('claude-code', 'fable'), 'prepareCall model matches resolveModel')
+  // unlisted ids stay advisory here too, with reasoning attached
+  const unlistedCall = await adapter.prepareCall('claude-code', 'claude-sonnet-4-5')
+  assert.deepEqual(unlistedCall.model, await adapter.resolveModel('claude-code', 'claude-sonnet-4-5'))
+  assert.ok(unlistedCall.model.reasoning !== undefined, 'unlisted prepareCall model keeps reasoning')
+  // rich config surfaces context/defaultMaxTokens through prepareCall as well
+  const richCall = await richAdapter.prepareCall('claude-code', 'fable')
+  assert.deepEqual(richCall.model.context, { contextWindow: 200000 })
+  assert.equal(richCall.model.defaultMaxTokens, 64000)
+  // dead-man dispatch: same single terminal error chunk as adapter.stream()
+  const dmChunks = []
+  for await (const chunk of call.stream({ provider: 'claude-code', model: 'fable' })) dmChunks.push(chunk)
+  assert.equal(dmChunks.length, 1)
+  assert.equal(dmChunks[0].type, 'finish')
+  assert.equal(dmChunks[0].reason.kind, 'error')
+  assert.equal(dmChunks[0].reason.failure.code, 'CLAUDE_CODE_ERROR')
+  // detached invocation stays safe (dsh-llm holds method references on a frozen path)
+  const { prepareCall } = adapter
+  const detached = await prepareCall('claude-code', 'fable')
+  assert.deepEqual(detached.model, call.model, 'prepareCall works when detached from the adapter')
+}
+
 // --- discovery: LlmDiscoveredModel shape, endpoint-free ---
 const discover = createModelDiscovery(settings)
 const discovered = await discover({ provider: 'claude-code' })
