@@ -5,6 +5,26 @@
   "type": "module",
   "main": "lib/index.js",
   "license": "MIT",
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zhangjunjesse/dsh-claude-driver.git"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "claude-code",
+    "llm-provider"
+  ],
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.233",
     "zod": "^4.0.0"

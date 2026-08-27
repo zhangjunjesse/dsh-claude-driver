@@ -1,0 +1,18 @@
+# Bundle wiring for `dsh plugin add` / registry installs.
+#
+# Mounting this plugin is inert on its own: it registers an llm adapter for the
+# `claude-code` provider and only takes over a turn once a session actually
+# selects that provider. Nothing is intercepted until you switch.
+#
+# No machine-specific values belong here. Set a proxy (needed when the outbound
+# IP is a datacenter IP and Anthropic answers 403) in your own profile patch,
+# not in the shipped manifest.
+- insert:
+    - id: claude-driver
+      name: dsh-claude-driver
+      # config:
+      #   provider: claude-code       # the llm/stream route this adapter claims
+      #   model: sonnet               # Claude model alias or full id
+      #   maxTurns: 100
+      #   permissionMode: acceptEdits
+      #   proxy: http://127.0.0.1:7897
