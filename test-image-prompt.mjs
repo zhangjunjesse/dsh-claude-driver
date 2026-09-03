@@ -38,10 +38,18 @@ const mockAttachments = {
 }
 const withService = { get: (name) => (name === 'attachments' ? mockAttachments : undefined), logger }
 
-async function collectPrompt(promptInput) {
+// Bounded on purpose: with waitForBackgroundTasks on (the default) the prompt is
+// an OPEN-ENDED AsyncIterable — it yields the one user message and then stays
+// pending so the CLI keeps stdin open. Draining it would never return.
+async function collectPrompt(promptInput, max = 1) {
   if (typeof promptInput === 'string') return { kind: 'string', value: promptInput }
   const messages = []
-  for await (const message of promptInput) messages.push(message)
+  const iterator = promptInput[Symbol.asyncIterator]()
+  while (messages.length < max) {
+    const next = await iterator.next()
+    if (next.done) break
+    messages.push(next.value)
+  }
   return { kind: 'stream', messages }
 }
 

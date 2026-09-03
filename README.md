@@ -20,7 +20,33 @@ DSH（DeepSeek Harness）宿主插件：让 DSH 会话把**本地 Claude Code �
 | subagent provider | 填上官方预留的 `claude-code` subagent 占位缝（`subagent_claude_code` 工具） |
 | 跨模型历史兼容 | 补写配对 assistant tool-call 事件，切回 deepseek 不报 400 |
 | resume 链治理 | 模型带 contextWindow（启用 DSH 自动压缩）+ 压缩后清链 + `/claude-fresh` 命令 |
+| 后台任务保活 | `waitForBackgroundTasks`：持有本步直到 Claude Code 自己的后台任务跑完，否则它们会在回合结束后被杀 |
 | 可执行文件回退 | SDK 原生二进制缺失时回退到全局 `claude.exe` |
+
+## 后台任务（waitForBackgroundTasks）
+
+Claude Code 用 `run_in_background` 起的任务，活在本驱动为这一步拉起的 CLI 进程里。
+一次性 run（`prompt` 传字符串）下，CLI 在放出 `result` 之后约 3–5 秒**就会把它们杀掉**，
+输出再也回收不到——用户看到的现象是「模型说在后台跑，但其实没跑完 / 没执行」。
+
+实测（SDK 0.3.252，15 秒的后台任务）表明豁免需要**同时**满足三条，缺一不可：
+
+1. 流式输入（stdin 保持打开，不能用字符串 prompt 的一次性形态）；
+2. 声明 `perTaskStopAffordance`；
+3. 后台任务还活着时**不要拆掉会话**。
+
+因此驱动默认（`waitForBackgroundTasks: true`）会持有本步，直到
+`background_tasks_changed` 电平信号显示存活集合为空，然后在本轮追加一行旁白说明结果。
+
+```yaml
+# profile 的 cordis.patch.yml 里，claude-driver 行的 config
+waitForBackgroundTasks: true      # 默认；false 可逐字回到旧的一次性行为
+backgroundTaskTimeoutMs: 300000   # 持有上限（默认 5 分钟），超时则结束本轮并点名仍在运行的任务
+```
+
+代价与边界：**一个长后台任务会让这一轮聊天一直等到它结束**（上限由
+`backgroundTaskTimeoutMs` 兜住），调用方 abort 也能立即释放。`ambient`（CLI 自己的
+维护型任务）不计入等待。
 
 ## 模型适配（新模型如何处理）
 
