@@ -178,13 +178,44 @@ const mockCtx = {
   get: (name) => (name === 'llm' ? mockLlm : undefined),
   logger: { info: () => {}, warn: () => {} },
 }
-apply(mockCtx, { model: 'fable' })
+apply(mockCtx, { model: 'fable', autoDiscoverModels: false })
 assert.ok(registered.listeners.includes('llm/stream'), 'llm/stream takeover listener installed')
 assert.equal(registered.adapters.length, 1)
 assert.deepEqual(registered.adapters[0].providers, ['claude-code'])
 assert.equal((await registered.adapters[0].adapter.listModels('claude-code')).length, 4)
 assert.equal(registered.discoveries[0].ns, 'claude-driver')
 assert.equal((await registered.discoveries[0].discover({ provider: 'claude-code' })).length, 4)
+
+// --- auto-discovery: catalog is built from the SDK supportedModels() list when
+// autoDiscoverModels is on and a queryImpl/supportedModels() is available ---
+const auto = { adapters: [], discoveries: [] }
+const mockQueryImpl = () => ({
+  supportedModels: async () => [
+    { value: 'fable', resolvedModel: 'claude-fable-5', displayName: 'Fable', description: 'most capable' },
+    { value: 'opus[1m]', resolvedModel: 'claude-opus-5[1m]', displayName: 'Opus (1M)' },
+  ],
+})
+apply({
+  on: () => {},
+  get: (name) => (name === 'llm' ? { listProviders: () => [], registerAdapter: (p, a) => auto.adapters.push({ providers: p, adapter: a }), registerModelDiscovery: (ns, d) => auto.discoveries.push({ ns, discover: d }) } : undefined),
+  logger: { info: () => {}, warn: () => {} },
+}, { model: 'fable', autoDiscoverModels: true, queryImpl: mockQueryImpl })
+const autoList = await auto.adapters[0].adapter.listModels('claude-code')
+assert.equal(autoList.length, 2)
+assert.equal(autoList[0].id, 'fable')
+assert.equal(autoList[0].name, 'Fable')
+assert.equal(autoList[1].id, 'opus[1m]')
+assert.equal((await auto.adapters[0].adapter.resolveModel('claude-code', 'opus[1m]')).context.contextWindow, 1000000) // from resolvedModel [1m] marker
+assert.deepEqual((await auto.discoveries[0].discover({ provider: 'claude-code' })).map((m) => m.id), ['fable', 'opus[1m]'])
+
+// auto-discovery degrades to the configured list when supportedModels() is absent
+const noDiscover = { adapters: [] }
+apply({
+  on: () => {},
+  get: (name) => (name === 'llm' ? { listProviders: () => [], registerAdapter: (p, a) => noDiscover.adapters.push({ providers: p, adapter: a }) } : undefined),
+  logger: { info: () => {}, warn: () => {} },
+}, { model: 'fable', autoDiscoverModels: true, queryImpl: async () => ({}) })
+assert.equal((await noDiscover.adapters[0].adapter.listModels('claude-code')).length, 4)
 
 // registerCatalog:false keeps the route stream-only (no picker registration)
 const off = { adapters: [], discoveries: [] }
