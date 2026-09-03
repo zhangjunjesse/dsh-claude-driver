@@ -27,7 +27,7 @@ async function collect(settings, messages, options = baseOptions) {
 }
 
 const delta = (text) => ({ type: 'stream_event', session_id: 's1', event: { type: 'content_block_delta', delta: { type: 'text_delta', text } } })
-const msgStart = () => ({ type: 'stream_event', session_id: 's1', event: { type: 'message_start' } })
+const msgStart = () => ({ type: 'stream_event', session_id: 's1', event: { type: 'message_start', message: { usage: { input_tokens: 10, output_tokens: 0 } } } })
 const assistant = (content, extra = {}) => ({ type: 'assistant', session_id: 's1', message: { content }, ...extra })
 const result = (text, usage = { input_tokens: 10, output_tokens: 5 }) =>
   ({ type: 'result', subtype: 'success', session_id: 's1', result: text, usage })
