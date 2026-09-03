@@ -1,6 +1,6 @@
 {
   "name": "dsh-claude-driver",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DSH host plugin: drive the main session model through local Claude Code (official Claude Agent SDK) by taking over the llm/stream route `claude-code`.",
   "type": "module",
   "main": "lib/index.js",

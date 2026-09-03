@@ -201,12 +201,12 @@ apply({
   logger: { info: () => {}, warn: () => {} },
 }, { model: 'fable', autoDiscoverModels: true, queryImpl: mockQueryImpl })
 const autoList = await auto.adapters[0].adapter.listModels('claude-code')
-assert.equal(autoList.length, 2)
-assert.equal(autoList[0].id, 'fable')
-assert.equal(autoList[0].name, 'Fable')
-assert.equal(autoList[1].id, 'opus[1m]')
+// Union: stable aliases first (from DEFAULT when no models config), then SDK-discovered extras.
+assert.equal(autoList.length, 5)
+assert.deepEqual(autoList.map((m) => m.id), ['fable', 'sonnet', 'opus', 'haiku', 'opus[1m]'])
+assert.ok(autoList.some((m) => m.id === 'opus[1m]'))
 assert.equal((await auto.adapters[0].adapter.resolveModel('claude-code', 'opus[1m]')).context.contextWindow, 1000000) // from resolvedModel [1m] marker
-assert.deepEqual((await auto.discoveries[0].discover({ provider: 'claude-code' })).map((m) => m.id), ['fable', 'opus[1m]'])
+assert.deepEqual((await auto.discoveries[0].discover({ provider: 'claude-code' })).map((m) => m.id), ['fable', 'sonnet', 'opus', 'haiku', 'opus[1m]'])
 
 // auto-discovery degrades to the configured list when supportedModels() is absent
 const noDiscover = { adapters: [] }
