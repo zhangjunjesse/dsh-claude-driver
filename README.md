@@ -21,7 +21,45 @@ DSH（DeepSeek Harness）宿主插件：让 DSH 会话把**本地 Claude Code �
 | 跨模型历史兼容 | 补写配对 assistant tool-call 事件，切回 deepseek 不报 400 |
 | resume 链治理 | 模型带 contextWindow（启用 DSH 自动压缩）+ 压缩后清链 + `/claude-fresh` 命令 |
 | 后台任务保活 | `waitForBackgroundTasks`：持有本步直到 Claude Code 自己的后台任务跑完，否则它们会在回合结束后被杀 |
+| 子代理抢救 | `harvestOrphanedSubagents`：随进程一起死掉的子代理，下一轮从磁盘 transcript 捞回它们的产出 |
 | 可执行文件回退 | SDK 原生二进制缺失时回退到全局 `claude.exe` |
+
+## 子代理抢救（harvestOrphanedSubagents）
+
+`waitForBackgroundTasks` 只能让子代理熬过**正常结束**的一轮。另外两种退出它救不了：
+
+1. **调用方 abort**——DSH 会话断开／重启／用户点停止：运行循环在 `signal.aborted` 上
+   直接 break，transport 被拆掉；
+2. **进程被硬杀**：连 `finally` 都不会执行。
+
+两种情况下子代理都死在半路，**最终回复根本没生成**，从委派方看就是这次委派什么都没交付。
+
+但回复没了不等于工作没了。Claude Code 边跑边把每个子代理写到磁盘：
+
+```
+<claudeHome>/projects/<项目>/<sessionId>/subagents/agent-<agentId>.jsonl
+```
+
+所以抢救是一次**读取**，不需要在「正在被杀死」这个最不可靠的时刻去 flush。
+
+实现用的是**预写标记**而不是退出钩子：某次运行首次报出存活的后台工作时写一个标记，
+正常收尾的运行删掉自己的标记；于是**任何残留标记都属于没能善终的运行**——包括被硬杀
+的那种，而这正是 `finally` 方案看不见的情况。下一次运行开始时清扫残留标记，捞出每个
+死掉子代理的最后一段 assistant 文本，按运行写一份报告：
+
+```
+$DSH_HOME/storages/claude-driver/recovered/<时间>-<sessionId>.md
+```
+
+并在本轮开头播报一行指向它。**抢救结果落在你回来的那一轮。**
+
+```yaml
+harvestOrphanedSubagents: true    # 默认；false 完全关闭
+```
+
+边界（诚实说明）：捞回来的是**过程**，不是那份没写出来的最终报告——子代理死前没生成的
+内容不存在于任何地方。真要让长任务不受会话生死影响，让它**边跑边把结果写进文件**，
+交付物落在磁盘上而不是攒在最后一条回复里（见 `deploy/长任务委派模板.md`）。
 
 ## 后台任务（waitForBackgroundTasks）
 
@@ -47,6 +85,13 @@ backgroundTaskTimeoutMs: 300000   # 持有上限（默认 5 分钟），超时�
 代价与边界：**一个长后台任务会让这一轮聊天一直等到它结束**（上限由
 `backgroundTaskTimeoutMs` 兜住），调用方 abort 也能立即释放。`ambient`（CLI 自己的
 维护型任务）不计入等待。
+
+**subagent（委派）路径同享此修复**：`claude-code` subagent provider
+（`lib/subagent-provider.js`）复用同一份实现（`lib/background-tasks.js`），默认
+同样 `waitForBackgroundTasks: true`，且读的是同一份 `settings`——profile 补丁里
+给 claude-driver 行配的 `waitForBackgroundTasks`/`backgroundTaskTimeoutMs` 对委派
+任务同样生效，无需单独配置。这修的是「委派任务经常失败」里的一类真实成因：被委派的
+Claude Code 自己起的后台工作在旧实现下会被静默杀掉，看起来像是任务没做完。
 
 ## 模型适配（新模型如何处理）
 
@@ -123,6 +168,9 @@ npm i --no-save
 | `nativeToolCards` | `true` | 桥接工具原生卡片 |
 | `bridgeTools` | `true` | DSH 工具桥接 |
 | `registerCatalog` | `true` | 进模型选择器 |
+| `waitForBackgroundTasks` | `true` | 持有本步直到后台任务跑完（否则它们被杀） |
+| `backgroundTaskTimeoutMs` | `300000` | 上述持有的上限（5 分钟） |
+| `harvestOrphanedSubagents` | `true` | 下一轮抢救随进程死掉的子代理产出 |
 | `approveBuiltinTools` | `false` | 内置工具走 DSH 审批（开启后每个 Bash 弹一次"允许一次"） |
 | `builtinAllowlist` | `['Read','Grep','Glob']` | 开启审批后仍直接放行的只读内置工具 |
 
@@ -135,6 +183,28 @@ npm i --no-save
 - **基本不生效**：所有靠 `systemPrompt` 注入模型上下文的 DSH 插件（记忆注入、会话级 context、prompt 变量、自动回忆）——DSH 组装的上下文到不了 Claude 眼前。
 - **结论**：想要 DSH 的记忆/上下文生态完整生效 → 用「deepseek 主模型 + Claude Code 委派」；主模型用 Claude Code → 把记忆交给 Claude Code 自己（`CLAUDE.md`、项目记忆等原生能力）。
 
+### 委派任务为什么不出现在 agent 追踪 UI（顶部标签页 / list_agents）里
+
+`claude-code` subagent provider 是 `@deepseek-ai/dsh-subagent` 定义的**远程 provider**
+（拉起一个进程外的 Claude Code CLI，不是 DSH 原生的进程内子会话）。该包 README 原文：
+
+> 本地运行会在 `start()` 兑现前发布普通的子 agent／会话……以 `SubagentRun.localAgent`
+> 公开准确的子 agent……**远程提供方则生成 parent 作用域的生命周期 id，并返回
+> `localAgent: undefined`；由于没有本地 child 会话，其一次性运行不会进入基于追踪的
+> 枚举结果。**
+
+所以：
+
+- 委派任务不会出现在按 `localAgent`/`list_agents`/`listChildren` 枚举的 agent 列表或
+  UI 标签页里——这是框架对"远程 provider"的既定约定，不是本插件的疏漏。框架自带的另一个
+  远程 provider（ACP）面对的是完全相同的限制（见该包 README「已知限制与暂缓事项」）。
+- 委派没有独立的可追踪会话可以承接输出，因此结果只能作为这次委派工具调用本身的返回值，
+  出现在发起委派的当前会话里——这也是为什么委派任务的输出内容会"刷"在当前会话，而不是
+  单独收纳在一个专属面板里。
+- 真要解决，需要在框架层给远程 provider 补一条可追踪的本地会话镜像（持久化远端 session id
+  + 逐子 agent 的继续执行能力声明），工作量在 `@deepseek-ai/dsh-subagent`，不在本插件；
+  详见该包 README「已知限制」里 ACP 那条的描述，两者需要的机制是同一件事。
+
 ## 合规与风险（如实）
 
 官方 SDK 是 Anthropic 支持的构建方式，但"第三方 harness 驱动 Claude Code"处于官方生态边缘；异常用量可能触发审查。请保持个人用量、不伪装客户端。token 全程由 SDK 管理、不落盘。
@@ -145,13 +215,15 @@ npm i --no-save
 
 ```powershell
 node test-run.mjs                 # 文本 + 工具桥接
-node test-subagent-provider.mjs   # subagent provider
+node test-subagent-provider.mjs   # subagent provider（真实 SDK）
 node test-resume-smoke.mjs        # resume 续接（真实 SDK 两连发）
 node test-resume-plan.mjs         # 离线单测
 node test-model-catalog.mjs       # 目录适配器
 node test-tool-progress.mjs       # 进度旁白
 node test-native-tool-cards.mjs   # 原生卡片事件
 node test-cross-model-and-fresh.mjs # 跨模型配对 + 清链/命令
+node test-background-tasks.mjs             # 主模型路径 waitForBackgroundTasks（离线单测）
+node test-subagent-background-tasks.mjs    # subagent 路径 waitForBackgroundTasks（离线单测）
 ```
 
 ## 路线图（未做）
@@ -164,9 +236,10 @@ node test-cross-model-and-fresh.mjs # 跨模型配对 + 清链/命令
 ## 目录
 
 ```
-lib/index.js           主模型接管 + 桥接 + 卡片 + resume 链 + 命令
-lib/model-catalog.js   模型选择器目录适配器 + 模型发现
+lib/index.js              主模型接管 + 桥接 + 卡片 + resume 链 + 命令
+lib/model-catalog.js      模型选择器目录适配器 + 模型发现
 lib/subagent-provider.js  claude-code subagent provider
+lib/background-tasks.js   waitForBackgroundTasks 共享实现（主模型路径 + subagent 路径都用）
 lib/claude-executable.js  SDK 原生二进制回退
-deploy/                安装模板（cordis.patch.yml + preset 片段）
+deploy/                   安装模板（cordis.patch.yml + preset 片段）
 ```

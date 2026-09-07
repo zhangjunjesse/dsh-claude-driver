@@ -2,6 +2,56 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/)。变动记录于此。
 
+## [Unreleased]
+
+### Added
+- **子代理随进程一起死掉时，产出可以捞回来了**（`harvestOrphanedSubagents`，默认开，
+  新增 `lib/agent-harvest.js`）。`waitForBackgroundTasks` 只能让子代理熬过**正常结束**的
+  一轮；调用方 abort（DSH 会话断开／重启／用户停止）会让运行循环在 `signal.aborted`
+  上直接 break 并拆掉 transport，而进程被硬杀时**连 `finally` 都不会执行**。两种情况下
+  子代理都死在半路，最终回复根本没生成——从委派方看就是「零交付」。
+
+  但**回复没了，过程还在**：Claude Code 会边跑边把每个子代理写到
+  `<claudeHome>/projects/<项目>/<sessionId>/subagents/agent-<id>.jsonl`。所以抢救是一次
+  **读取**，不需要在「正在被杀死」这个最不可靠的时刻去 flush。
+
+  机制是**预写标记**而不是退出钩子：某次运行首次报出存活的后台工作时，写一个标记记下
+  它的 Claude 会话 id；正常收尾的运行删掉自己的标记；因此**任何残留标记都属于没能善终
+  的运行**——包括被硬杀的那种，而这正是 `finally` 方案看不见的情况。下一次运行开始时
+  清扫残留标记，把每个死掉子代理的最后一段 assistant 文本捞出来，按运行写一份报告到
+  `$DSH_HOME/storages/claude-driver/recovered/`，并在本轮开头播报一行指向它。
+  **抢救结果落在用户回来的那一轮**，也正是他们需要它的时刻。
+
+  该旁白与后台任务旁白同规则：计入 `text`、不计入 `realText`，所以既不会掩盖空回复，也
+  不会顶掉 result 兜底。新增 `test-agent-harvest.mjs`（内存 fs + `queryImpl` 缝，全离线）
+  覆盖定位、解析、标记生命周期、抢救、自我豁免、TTL 清扫，以及驱动确实播报这六件事。
+
+### Fixed
+- **`claude-code` subagent provider（委派任务）现在也不会杀掉 Claude Code 自己的后台任务**。
+  [0.3.0] 只把 `waitForBackgroundTasks` 三件套（开放式 stdin、`perTaskStopAffordance`、
+  result 后继续持有）修到了主模型接管路径（`lib/index.js`），委派路径
+  （`lib/subagent-provider.js`）当时仍是旧的一次性 `prompt` 字符串——被委派的
+  Claude Code 若自己用 `run_in_background` 起活，会在这条委派 `result` 后
+  ~3–5 秒被杀掉，产出永远收不回来，从委派方视角就是「经常失败 / 结果不完整」。
+  现在两条路径共享同一份实现（新增 `lib/background-tasks.js`：
+  `openEndedPrompt` + `renderBackgroundNote` + `BACKGROUND_DRAIN_MS`），
+  `subagent-provider.js` 默认同样开启 `waitForBackgroundTasks: true`
+  （沿用调用方已经配置的 `waitForBackgroundTasks`/`backgroundTaskTimeoutMs`，
+  因为两条路径读的是同一份 `settings`）。新增 `test-subagent-background-tasks.mjs`
+  离线单测（镜像 `test-background-tasks.mjs` 的 mock-query 手法）。
+
+### Notes
+- **委派任务不出现在"顶部 ClaudeCode 标签页"是设计使然，不是这次修的 bug**：本
+  provider 通过官方 SDK 拉起一个进程外的 Claude Code CLI，属于
+  `@deepseek-ai/dsh-subagent` 定义的"远程 provider"，因此 `start()` 按约定
+  返回 `localAgent: undefined`（该包 README 原文：「远程提供方...返回
+  `localAgent: undefined`；由于没有本地 child 会话，其一次性运行不会进入基于
+  追踪的枚举结果」）。这与该框架另一个远程 provider（ACP）面对的限制完全一样
+  （见 `@deepseek-ai/dsh-subagent` README「已知限制与暂缓事项」）。因此委派输出
+  只能落回发起委派的当前会话里，而不会单独出现在按 `localAgent` 枚举的 agent
+  列表/标签页中——要改变这一点需要框架层面为远程 provider 补一条可追踪的本地
+  会话镜像，超出本插件范围。
+
 ## [0.3.0] - yyyy-mm-dd
 
 ### Fixed
