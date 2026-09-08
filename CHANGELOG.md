@@ -27,6 +27,33 @@
   覆盖定位、解析、标记生命周期、抢救、自我豁免、TTL 清扫，以及驱动确实播报这六件事。
 
 ### Fixed
+- **子代理（Task/Agent 工具）的正文与思考不再混进主模型回复**（`lib/index.js` 的整条
+  assistant 消息分支）。Claude Code 内部起的子代理会产生自己的 `assistant` 消息，它们带
+  `parent_tool_use_id`；驱动在**四处**里已有三处正确隔离了这类流量——token 级流式分支
+  （`stream_event`）、per-request usage 采样、工具进度播报——唯独**整条消息的
+  text/thinking 兜底路径**漏掉了这道判断。于是子代理的每一段回答正文和思考过程都被当成
+  主模型输出，直接 yield 成 `text-delta` / `reasoning-delta` 灌进 DSH 的对话流：用户看到
+  的是主模型突然开始复述一份根本不属于本轮对话的报告，思考栏里也混入了别人的推理。更隐蔽
+  的是这些文本还被计入 `realText`，因此主模型即使**真的什么都没回答**，也会被子代理的文本
+  顶掉空响应保护（`EMPTY_RESPONSE`）和 `result` 兜底，让一次实际失败的回合看上去「有输出」。
+  现在在 usage 采样之后、文本累积之前提前 `continue`（写法与 `stream_event` 分支对称），
+  子代理消息一律不进入主回复；工具进度那处原有的 `!msg.parent_tool_use_id` 守卫保留为冗余
+  防御。`test-tool-progress.mjs` 新增三条离线断言：带 `parent_tool_use_id` 的
+  text+thinking 消息不产生任何 delta、也不再掩盖空响应，而同样的消息去掉
+  `parent_tool_use_id` 后仍正常流出。
+
+- **后台任务播报不再把子代理的整篇报告塞进对话正文**（`lib/background-tasks.js` 新增
+  `briefTaskSummary` / `MAX_TASK_SUMMARY_CHARS`）。CLI 的 `task_notification.summary`
+  对 shell 后台任务是一句短状态，但对 Task/Agent 类任务**是子代理的完整报告全文**（动辄数
+  千字）。`renderBackgroundNote` 此前把这个字段当短标题原样拼接，于是
+  `[Claude Code 后台任务已结束：…]` 这行本该是一句旁白的方括号里被塞进整篇报告，把用户的
+  对话正文彻底冲垮，方括号也被撑得毫无可读性。现在**只在渲染层**收敛：取首个非空行、按
+  80 字符硬截断、被丢弃的内容统一收敛成**一个**省略号（不会出现「……」）；采集层
+  （`index.js` 的 `task_notification` 分支）**刻意保持原样**，完整 summary 仍然留在
+  `backgroundOutcomes` 里，供将来的 UI 面板展开使用。`test-background-tasks.mjs` 覆盖了短单
+  行、多行、超长单行、空/`undefined`/`null` 回退到 `taskId`、首行为空白等全部分支，外加一条
+  集成断言：多行长报告经 `renderBackgroundNote` 后仍是单行、长度受控、方括号正确闭合。
+
 - **`claude-code` subagent provider（委派任务）现在也不会杀掉 Claude Code 自己的后台任务**。
   [0.3.0] 只把 `waitForBackgroundTasks` 三件套（开放式 stdin、`perTaskStopAffordance`、
   result 后继续持有）修到了主模型接管路径（`lib/index.js`），委派路径

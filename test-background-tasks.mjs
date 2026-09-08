@@ -3,7 +3,13 @@
 // are live, because tearing the session down at `result` is exactly what kills
 // them. Uses the settings.queryImpl seam. Run: node test-background-tasks.mjs
 import assert from 'node:assert/strict'
-import { buildSdkPrompt, renderBackgroundNote, streamClaudeChunks } from './lib/index.js'
+import {
+  briefTaskSummary,
+  buildSdkPrompt,
+  MAX_TASK_SUMMARY_CHARS,
+  renderBackgroundNote,
+  streamClaudeChunks,
+} from './lib/index.js'
 
 const ctx = { get: () => undefined, logger: { info: () => {}, warn: () => {} } }
 const baseOptions = {
@@ -74,6 +80,50 @@ assert.ok(
   renderBackgroundNote([], [{ task_id: 'x', description: 'long job' }], false, 60000).includes('仍在运行'),
   'still-running note when the stream ended early',
 )
+
+// --- briefTaskSummary: a status line, never a whole agent report ---------------
+assert.equal(briefTaskSummary('done'), 'done', 'short single line kept verbatim, no ellipsis')
+assert.equal(briefTaskSummary('line1\nline2'), 'line1…', 'later lines dropped, marked with one ellipsis')
+assert.equal(briefTaskSummary('line1\r\nline2'), 'line1…', 'CRLF split too')
+{
+  const long = 'x'.repeat(200)
+  const brief = briefTaskSummary(long)
+  assert.equal(brief, `${'x'.repeat(MAX_TASK_SUMMARY_CHARS)}…`, 'long line capped at MAX_TASK_SUMMARY_CHARS')
+  assert.equal(brief.length, MAX_TASK_SUMMARY_CHARS + 1, 'exactly one ellipsis appended')
+  assert.ok(!brief.includes('……'), 'never two ellipses')
+}
+{
+  // Cut first line AND dropped later lines: still exactly one ellipsis.
+  const brief = briefTaskSummary(`${'y'.repeat(120)}\n更多内容\n还有更多`)
+  assert.equal(brief, `${'y'.repeat(MAX_TASK_SUMMARY_CHARS)}…`)
+  assert.ok(!brief.includes('……'), 'never two ellipses when both cut and truncated')
+}
+assert.equal(briefTaskSummary('a'.repeat(MAX_TASK_SUMMARY_CHARS)), 'a'.repeat(MAX_TASK_SUMMARY_CHARS), 'exactly at the cap is untouched')
+assert.equal(briefTaskSummary(''), '', 'empty string → empty')
+assert.equal(briefTaskSummary('   \n  '), '', 'whitespace-only → empty')
+assert.equal(briefTaskSummary(undefined), '', 'undefined → empty')
+assert.equal(briefTaskSummary(null), '', 'null → empty')
+assert.equal(briefTaskSummary('\n\n  真正的内容\n后面还有'), '真正的内容…', 'blank leading lines skipped')
+assert.ok(
+  renderBackgroundNote([{ status: 'completed', taskId: 'task-7', summary: '' }], [], false, 1000).includes('task-7（completed）'),
+  'empty summary falls back to the taskId',
+)
+assert.ok(
+  renderBackgroundNote([{ status: 'completed', taskId: 'task-7' }], [], false, 1000).includes('task-7（completed）'),
+  'missing summary falls back to the taskId',
+)
+
+// --- integration: a multi-line agent report stays a one-line note --------------
+{
+  const report = `已完成对仓库的审计，发现 3 处问题。\n${'详细说明。'.repeat(200)}\n结论：建议立即修复。`
+  const note = renderBackgroundNote([{ status: 'completed', taskId: 't9', summary: report }], [], false, 1000)
+  assert.ok(!note.slice(2).includes('\n'), 'note body is a single line (only the leading blank lines)')
+  assert.ok(note.endsWith(']'), 'bracket properly closed')
+  assert.ok(note.length < 200, `note stays short, got ${note.length}`)
+  assert.ok(note.includes('已完成对仓库的审计，发现 3 处问题。'), 'first line survives')
+  assert.ok(!note.includes('结论：建议立即修复。'), 'trailing report body dropped')
+  assert.ok(note.includes('（completed）'), 'status still rendered')
+}
 
 // --- buildSdkPrompt: open-input only when asked --------------------------------
 {

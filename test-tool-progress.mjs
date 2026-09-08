@@ -97,6 +97,75 @@ assert.equal(renderToolProgress('mcp__dsh-tools__add'), renderToolProgress('add'
   assert.ok(chunks.every((c) => c.type !== 'text-delta' || !c.text.includes('正在调用工具')), 'subagent tool_use stays silent')
 }
 
+// --- subagent assistant text/thinking never enters the main reply ---
+{
+  const chunks = await collect({}, [
+    assistant(
+      [
+        { type: 'text', text: '子代理的正文报告' },
+        { type: 'thinking', thinking: '子代理的内心独白' },
+      ],
+      { parent_tool_use_id: 'parent-1' },
+    ),
+    msgStart(),
+    delta('好的。'),
+    assistant([{ type: 'text', text: '好的。' }]),
+    result('好的。'),
+  ])
+  const texts = chunks.filter((c) => c.type === 'text-delta').map((c) => c.text)
+  const reasonings = chunks.filter((c) => c.type === 'reasoning-delta').map((c) => c.text)
+  assert.deepEqual(texts, ['好的。'], 'only the main model text is streamed')
+  assert.deepEqual(reasonings, [], 'subagent thinking produces no reasoning-delta')
+  assert.equal(
+    chunks.filter((c) => c.type === 'block-start' && c.blockType === 'reasoning').length,
+    0,
+    'no reasoning block opened for subagent thinking',
+  )
+  const blockEnd = chunks.find((c) => c.type === 'block-end' && c.index === 0)
+  assert.equal(blockEnd.block.text, '好的。', 'block-end carries no subagent text')
+  assert.deepEqual(chunks.at(-1).reason, { kind: 'stop' })
+}
+
+// --- subagent text does not count as realText (empty response stays empty) ---
+{
+  const chunks = await collect({}, [
+    assistant(
+      [
+        { type: 'text', text: '子代理的完整报告' },
+        { type: 'thinking', thinking: '子代理的思考' },
+      ],
+      { parent_tool_use_id: 'parent-1' },
+    ),
+    result(''),
+  ])
+  assert.ok(
+    chunks.every((c) => c.type !== 'text-delta' || !c.text.includes('子代理')),
+    'subagent text never streamed',
+  )
+  assert.equal(chunks.at(-1).reason.kind, 'error')
+  assert.equal(
+    chunks.at(-1).reason.failure.code,
+    'EMPTY_RESPONSE',
+    'subagent-only body is still an empty response',
+  )
+}
+
+// --- control: the same message WITHOUT parent_tool_use_id streams normally ---
+{
+  const chunks = await collect({}, [
+    assistant([
+      { type: 'text', text: '子代理的正文报告' },
+      { type: 'thinking', thinking: '子代理的内心独白' },
+    ]),
+    result('子代理的正文报告'),
+  ])
+  const texts = chunks.filter((c) => c.type === 'text-delta').map((c) => c.text)
+  const reasonings = chunks.filter((c) => c.type === 'reasoning-delta').map((c) => c.text)
+  assert.deepEqual(texts, ['子代理的正文报告'], 'top-level text still streams')
+  assert.deepEqual(reasonings, ['子代理的内心独白'], 'top-level thinking still streams')
+  assert.deepEqual(chunks.at(-1).reason, { kind: 'stop' }, 'top-level text satisfies realText')
+}
+
 // --- progress-only turn recovers the final answer from msg.result as a delta ---
 {
   const chunks = await collect({}, [
