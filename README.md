@@ -61,6 +61,12 @@ harvestOrphanedSubagents: true    # 默认；false 完全关闭
 内容不存在于任何地方。真要让长任务不受会话生死影响，让它**边跑边把结果写进文件**，
 交付物落在磁盘上而不是攒在最后一条回复里（见 `deploy/长任务委派模板.md`）。
 
+**长任务规范**（`deploy/长任务规范.md`）：凡超过 1 分钟的任务禁止用当前会话 shell 起
+后台任务（会话/进程重启即丢失且无完成记录），必须用 `claude_code` 委派
+（`run_in_background`）或 `Start-Process` 独立进程 + 日志落盘。规则同时落在
+`~/.dsh/.agent-presets/<preset>/agent.cordis.yml` persona 与 `~/.claude/CLAUDE.md`，
+对 DSH 主模型与被委派的 Claude Code 双侧强制。
+
 ## 后台任务（waitForBackgroundTasks）
 
 Claude Code 用 `run_in_background` 起的任务，活在本驱动为这一步拉起的 CLI 进程里。
@@ -92,6 +98,41 @@ backgroundTaskTimeoutMs: 300000   # 持有上限（默认 5 分钟），超时�
 给 claude-driver 行配的 `waitForBackgroundTasks`/`backgroundTaskTimeoutMs` 对委派
 任务同样生效，无需单独配置。这修的是「委派任务经常失败」里的一类真实成因：被委派的
 Claude Code 自己起的后台工作在旧实现下会被静默杀掉，看起来像是任务没做完。
+
+## 与 dsh-claude-code 配合：prompt 缓存 TTL（ENABLE_PROMPT_CACHING_1H）
+
+> 背景（本机实测踩坑记录，2026-09）：claude-driver 与 dsh-claude-code 两个插件
+> 配合使用（主模型切到 claude-code + 用 `claude_code` 工具委派），主模型委派出去
+> 的子任务**经常跑超过 5 分钟**。Claude 的 prompt caching 默认 TTL 是 **5 分钟**，
+> 对话间隔一旦超过 5 分钟，上一轮写入的缓存全部失效，下一轮要**重新写缓存**
+> （`cache_creation` 计费），长对话反复失效会白烧大量 token。
+>
+> 解法：给 Claude Code 设置环境变量 **`ENABLE_PROMPT_CACHING_1H=1`**，把 prompt
+> cache TTL 从默认 5 分钟提到 **1 小时**（Claude Code ≥ 2.1.108 起支持，API key /
+> Bedrock / Vertex / Foundry 通用；旧的 `ENABLE_PROMPT_CACHING_1H_BEDROCK` 已弃用
+> 但作为别名仍被兼容）。1 小时 TTL 的缓存写入费率高于 5 分钟，但对
+> 「委派/后台任务经常跨 5 分钟」的用法整体是省 token 的——这正是本机设成 1h 的原因。
+
+设置方式（任选其一，都会透传给本插件拉起的 Claude Code 子进程）：
+
+```powershell
+# 1) Windows 用户级环境变量（推荐，重启 DSH 生效）
+setx ENABLE_PROMPT_CACHING_1H 1
+
+# 2) 当前 shell 一次性（仅本次会话）
+$env:ENABLE_PROMPT_CACHING_1H = "1"
+
+# 3) 或在 ~/.claude/settings.json 的 "env" 块里：
+#    { "env": { "ENABLE_PROMPT_CACHING_1H": "1" } }
+```
+
+相关的控制变量：
+
+| 变量 | 作用 |
+|---|---|
+| `ENABLE_PROMPT_CACHING_1H=1` | 请求 1 小时 prompt cache TTL（默认 5 分钟） |
+| `FORCE_PROMPT_CACHING_5M=1` | 强制回到默认 5 分钟 TTL |
+| `DISABLE_PROMPT_CACHING=1` | 完全禁用 prompt caching（优先于上面的开关） |
 
 ## 模型适配（新模型如何处理）
 
