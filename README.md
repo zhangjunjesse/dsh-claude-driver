@@ -67,6 +67,113 @@ harvestOrphanedSubagents: true    # 默认；false 完全关闭
 `~/.dsh/.agent-presets/<preset>/agent.cordis.yml` persona 与 `~/.claude/CLAUDE.md`，
 对 DSH 主模型与被委派的 Claude Code 双侧强制。
 
+## 模型提问却弹不出选择卡片（disableBuiltinAskUserQuestion）
+
+症状：模型说"我问了你一个问题"，但你屏幕上**什么都没出现**，模型那边收到的是
+`The user did not answer the questions.`
+
+原因链有两环：
+
+**① 内置 `AskUserQuestion` 是被 `canUseTool` 顺带放出来的。** CLI 用「宿主有没有注册
+`canUseTool`」来判断「这个宿主有没有交互界面」。实测（CLI 2.1.258 / SDK 0.3.260，
+只改一个变量）：
+
+| 配置 | 工具总数 | 是否提供 `AskUserQuestion` |
+|---|---|---|
+| 裸 query | 29 | 否 |
+| `+ canUseTool` | **32** | **是** |
+| `+ canUseTool + disallowedTools:['AskUserQuestion']` | 31 | 否 |
+
+而本驱动**只要桥接了任何 DSH 工具就必装 `canUseTool`**，于是每个正常会话都被塞进一个
+假的交互能力声明。但 `canUseTool` 只能回答「允许/拒绝」，**它不会渲染选择题**——
+CLI 把对话框 park 给一个永远不会显示它的宿主，到期返回「用户未作答」。
+
+**② 整个过程在 GUI 里完全静默。** 原生卡片只发给**桥接的 DSH 工具**
+（`rendersCard` 只匹配 `bridgedNames`），内置工具的兜底是 `showToolProgress`，
+而它默认关。两条路都断 ⇒ 一次完整的「提问→等待→超时」零痕迹。
+
+修法（默认开）：
+
+- `disableBuiltinAskUserQuestion: true` → 把内置版摘掉，模型回落到 DSH 自己的
+  `ask_user_question`（它是桥接工具，有真卡片）。**有护栏**：只在这一轮确实桥接了
+  `ask_user_question` 时才屏蔽，否则会把模型唯一的提问途径也掐掉，让它闷头猜。
+- `narrateBuiltinToolErrors: true` → 内置工具返回 `is_error`，或返回「未作答」哨兵时，
+  补一行旁白。**静默失败比报错难查十倍**，这条是兜底。
+
+两个工具长得像但不是一个：内置版参数是 `multiSelect`（驼峰），DSH 版是
+`multi_select`（下划线）——看到驼峰就说明模型用错了工具。
+
+## 思考过程可见性（thinkingDisplay / thinkingHeartbeat）
+
+当代模型（Sonnet 4.6 / Fable 一代）默认走 **redacted thinking（加密思考）**：
+`thinking_delta` 帧照常到达，但 `delta.thinking` 是**空串**，API 只流 ping 和一个
+`estimated_tokens` running total。驱动早期版本的两处思考提取都要求文本非空，于是恒被
+短路——一轮烧掉 650 个思考 token 的回合**一个 `reasoning-delta` 都没发出去**，GUI 里
+没有思考块，只剩通用等待动画，无法区分「在想」和「卡死」。
+
+两层修复，默认都开：
+
+| 键 | 默认 | 作用 |
+|---|---|---|
+| `thinkingDisplay` | `'summarized'` | 以 CLI flag `--thinking-display` 请求 API 侧思考摘要，把可读文本要回来 |
+| `thinkingHeartbeat` | `true` | 消费 `system/thinking_tokens` 帧，在加密阶段写一条会生长的点线作为活体信号 |
+
+摘要可用时，思考块是正常的可读文本；摘要不可用（或 `thinkingDisplay: null`）时退化成：
+
+```
+🤔 思考中（本轮思考内容已加密，仅可见进度） · · 约 550 tokens
+```
+
+真实摘要一旦出现，心跳自动让位（保留为块内历史，不再追加点）。
+
+### 思考框限高（客户端半边，0.8.0）
+
+思考内容一长会把整个对话撑爆。本插件从 0.8.0 起带一个**客户端半边**
+（`dsh.client` + `client/client.js`，宿主自动送进浏览器执行）：
+
+- 展开的思考正文限高 **320px**、内部滚动；改高度不用重装——在任意上层容器设
+  CSS 变量 `--claude-driver-think-max-height` 即可
+- **流式跟随**：思考还在流式输出时自动钉在底部，最新内容始终可见；向上滚动即
+  暂停跟随，滚回底部自动恢复
+- 选择器匹配稳定的 `_thinkBody` 类名后缀（不依赖 ui-chat 的构建哈希）；ui-chat
+  未来改名则整体退化为原生无限高行为，不会弄坏页面
+
+注意：这是前端样式，影响**所有模型**的思考框（包括原生 deepseek），不只 claude。
+生效需要刷新页面或重启 DSH Desktop。
+
+**坑**：query 的内联 `settings: { showThinkingSummaries: true }` 实测**不生效**
+（0 字符），只有 CLI flag 管用——所以驱动走 `extraArgs`。
+
+## 内置工具可见性（narrateBuiltinTools）
+
+思考可见性修好之后，剩下的黑盒是**工具阶段**：原生卡片（`nativeToolCards`）只发给
+**桥接的 DSH 工具**，Claude 自己的内置工具（Bash / Read / WebFetch / Task…）没有卡片，
+唯一的兜底 `showToolProgress` 默认关——于是一轮花一分钟在 Bash 里的回合，在 GUI 上和
+卡死长得一模一样。
+
+`narrateBuiltinTools: true`（默认开）在承载 `tool_use` 的 assistant 消息到达时——也就是
+**工具真正开跑之前**——补一行紧凑旁白，把随后的沉默归因到一个具名工具：
+
+```
+[Claude Code] ⚙ Bash · npm test
+[Claude Code] ⚙ Read · lib/index.js
+```
+
+和旧的 `showToolProgress`（只有裸工具名 `正在调用工具 Bash…`）的区别是**带主语**，这也是
+这行字值得占屏幕的原因。主语按固定键序取（`command` / `file_path` / `path` / `pattern` /
+`url` / `query` / `description` / `prompt`），**不在表里的键永远不渲染**——所以 `Write`
+显示的是路径而不是整个文件正文，新增内置工具最差只退化成裸工具名，不会漏出任意 blob。
+主语压成单行并截到 80 字符。
+
+两个旁白器互斥：`showToolProgress` 显式打开时它优先，旧输出逐字节不变，两者不会叠加。
+桥接工具默认跳过（卡片已经说过了）；但当卡片不可用时（`rendersCard` 因为没有可 append 的
+session 返回 false），桥接工具也会走这行旁白——否则它同样会零痕迹。
+
+**放在哪（`toolNarrationChannel`，0.7.0）**：默认 `'reasoning'`——活动旁白和内置工具
+错误旁白都追加进可折叠的「思考」块，而不是插进正文。实测把它们放正文时，`[Claude Code] ⚙`
+行会直接黏在模型的句子中间，读起来是噪音。设 `'text'` 恢复 0.5.0 的正文放置。
+`showToolProgress` 不受此开关影响（它承诺历史输出逐字节不变，永远走正文）。
+
 ## 后台任务（waitForBackgroundTasks）
 
 Claude Code 用 `run_in_background` 起的任务，活在本驱动为这一步拉起的 CLI 进程里。
@@ -80,7 +187,12 @@ Claude Code 用 `run_in_background` 起的任务，活在本驱动为这一步�
 3. 后台任务还活着时**不要拆掉会话**。
 
 因此驱动默认（`waitForBackgroundTasks: true`）会持有本步，直到
-`background_tasks_changed` 电平信号显示存活集合为空，然后在本轮追加一行旁白说明结果。
+`background_tasks_changed` 电平信号显示存活集合为空，然后在本轮追加旁白说明结果。
+
+**旁白的去向按严重度分流（0.9.0）**：全部 completed 的结算清单是记账不是回答，
+走 `toolNarrationChannel`（默认进可折叠的思考块；设 `'text'` 回到旧的正文放置）；
+**failed / 超时 / 回合结束仍在运行**意味着产出可能已丢失，**始终写在正文**，
+不允许被折叠掉。子代理路径的清单保持单通道不变——那是上级代理要读的数据。
 
 ```yaml
 # profile 的 cordis.patch.yml 里，claude-driver 行的 config
@@ -98,6 +210,28 @@ backgroundTaskTimeoutMs: 300000   # 持有上限（默认 5 分钟），超时�
 给 claude-driver 行配的 `waitForBackgroundTasks`/`backgroundTaskTimeoutMs` 对委派
 任务同样生效，无需单独配置。这修的是「委派任务经常失败」里的一类真实成因：被委派的
 Claude Code 自己起的后台工作在旧实现下会被静默杀掉，看起来像是任务没做完。
+
+## 回合首字延迟与预热（prewarm）
+
+每一轮对话驱动都要拉起一个全新的 Claude Code CLI 进程，其**本地** bootstrap 约需
+3.5–4s（2026-09-16 实测：API 指到黑洞地址 init 帧照样 3.56s 出现，纯本地零网络；
+fresh 与 resume 完全一样；CLI 2.1.234 与 2.1.260 一样——升级救不了）。再叠加 API
+首字 4–6s（每轮约 4 万 token 的固定系统开销），用户体感就是「每条消息固定等十秒起」。
+
+`prewarm: true` 后，回合一收尾驱动就用 `resume` + 开放式流式输入把**下一轮**的
+CLI 进程先拉起来晾着——4s 初始化全部发生在用户阅读上一条回答的空闲期。下一条消息
+到达时若与预热进程完全匹配（同 resume id / 模型 / 思考档 / 桥接工具集）则直接**推入**
+其输入流（实测端到端：冷 9.7s → 领养 4.5s）；任何不匹配、进程死亡、TTL 过期都原样
+走冷路径，最坏情况等于现状。注意事项：
+
+- 依赖 `waitForBackgroundTasks`（开放输入传输层）；关闭它则预热不生效。
+- 每回合结束会挂一个空闲 CLI 进程（全局上限 2 个，跨会话 LRU 淘汰；
+  `prewarmTtlMs` 到期自动回收；压缩/`/claude-fresh`/切模型都会废弃它）。
+- 只加速「同一会话的下一轮」；新会话第一条消息仍是冷启动。
+- 切模型的第一轮除了冷启动还要付一次 prompt cache 重建（缓存按模型隔离，约 20s 级），
+  与本功能无关，属 API 侧行为。
+- 处置预热进程**必须**走「关输入流 + abort」——对开放输入的 SDK query 调
+  `iterator.return()` 会永久挂起（实测），这是实现内注释反复强调的坑。
 
 ## 与 dsh-claude-code 配合：prompt 缓存 TTL（ENABLE_PROMPT_CACHING_1H）
 
@@ -204,14 +338,23 @@ npm i --no-save
 | `permissionMode` | `acceptEdits` | Claude Code 权限模式 |
 | `proxy` | `http://127.0.0.1:7897` | 代理（按机器改） |
 | `resumeChain` | `true` | 复用 Claude 会话 |
+| `prewarm` | `false` | 回合一结束就预启动下一轮的 CLI 进程，下一条消息跳过约 4s 本地初始化（见下节） |
+| `prewarmTtlMs` | `900000` | 预热进程空闲多久未被领养即回收（15 分钟） |
 | `partialStream` | `true` | token 级流式 |
-| `showToolProgress` | `false` | 内置工具进度旁白（桥接工具已有卡片，默认关） |
+| `thinkingDisplay` | `'summarized'` | 请求 API 侧思考摘要（`'omitted'` 关闭摘要，`null` 用 CLI 默认） |
+| `thinkingHeartbeat` | `true` | 加密思考阶段的活体心跳（见下节） |
+| `showToolProgress` | `false` | 旧版裸工具名进度旁白（默认关；开启后优先于下一行） |
+| `narrateBuiltinTools` | `true` | 内置工具带主语的活动旁白（`⚙ Bash · npm test`，见下节） |
+| `toolNarrationChannel` | `'reasoning'` | 工具旁白放思考块（默认）还是正文（`'text'`，0.5.0 行为） |
 | `nativeToolCards` | `true` | 桥接工具原生卡片 |
 | `bridgeTools` | `true` | DSH 工具桥接 |
 | `registerCatalog` | `true` | 进模型选择器 |
 | `waitForBackgroundTasks` | `true` | 持有本步直到后台任务跑完（否则它们被杀） |
 | `backgroundTaskTimeoutMs` | `300000` | 上述持有的上限（5 分钟） |
 | `harvestOrphanedSubagents` | `true` | 下一轮抢救随进程死掉的子代理产出 |
+| `disableBuiltinAskUserQuestion` | `true` | 屏蔽 Claude 内置 `AskUserQuestion`（DSH 无法渲染，见下节） |
+| `narrateBuiltinToolErrors` | `true` | 内置工具调用失败时补一行旁白，杜绝静默失败 |
+| `disallowedTools` | `undefined` | 额外不提供给 Claude Code 的工具名 |
 | `approveBuiltinTools` | `false` | 内置工具走 DSH 审批（开启后每个 Bash 弹一次"允许一次"） |
 | `builtinAllowlist` | `['Read','Grep','Glob']` | 开启审批后仍直接放行的只读内置工具 |
 
@@ -265,6 +408,8 @@ node test-native-tool-cards.mjs   # 原生卡片事件
 node test-cross-model-and-fresh.mjs # 跨模型配对 + 清链/命令
 node test-background-tasks.mjs             # 主模型路径 waitForBackgroundTasks（离线单测）
 node test-subagent-background-tasks.mjs    # subagent 路径 waitForBackgroundTasks（离线单测）
+node test-thinking-stream.mjs              # 思考块可见性（真实 SDK；NO_SUMMARY=1 验心跳兜底）
+node test-ask-user-question.mjs            # 内置 AskUserQuestion 屏蔽 + 静默失败旁白（离线单测）
 ```
 
 ## 路线图（未做）

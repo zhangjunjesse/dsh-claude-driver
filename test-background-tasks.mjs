@@ -8,6 +8,7 @@ import {
   buildSdkPrompt,
   MAX_TASK_SUMMARY_CHARS,
   renderBackgroundNote,
+  renderBackgroundNotes,
   streamClaudeChunks,
 } from './lib/index.js'
 
@@ -65,6 +66,7 @@ const result = (text) => ({
 })
 
 const textOf = (chunks) => chunks.filter((c) => c.type === 'text-delta').map((c) => c.text).join('')
+const reasoningOf = (chunks) => chunks.filter((c) => c.type === 'reasoning-delta').map((c) => c.text).join('')
 
 // --- renderBackgroundNote shape ------------------------------------------------
 assert.equal(renderBackgroundNote([], [], false, 1000), '', 'nothing to report → no note')
@@ -80,6 +82,32 @@ assert.ok(
   renderBackgroundNote([], [{ task_id: 'x', description: 'long job' }], false, 60000).includes('仍在运行'),
   'still-running note when the stream ended early',
 )
+
+// --- renderBackgroundNotes: severity split for the main session ----------------
+{
+  const notes = renderBackgroundNotes([{ status: 'completed', summary: 'build' }], [], false, 1000)
+  assert.ok(notes.info.includes('build（completed）'), 'completed settlement goes to info')
+  assert.equal(notes.alert, '', 'all-completed → no alert')
+}
+{
+  const notes = renderBackgroundNotes([{ status: 'failed', summary: 'deploy' }], [], false, 1000)
+  assert.equal(notes.info, '', 'no completed entries → no info')
+  assert.ok(notes.alert.includes('后台任务失败：deploy（failed）'), 'failure goes to alert, named as such')
+}
+{
+  const notes = renderBackgroundNotes(
+    [{ status: 'completed', summary: 'build' }, { status: 'failed', summary: 'deploy' }],
+    [{ task_id: 'x', description: 'long job' }],
+    true,
+    60000,
+  )
+  assert.ok(notes.info.includes('build（completed）'), 'mixed: completed stays info')
+  assert.ok(!notes.info.includes('deploy'), 'mixed: failure never leaks into info')
+  assert.ok(notes.alert.includes('deploy（failed）'), 'mixed: failure in alert')
+  assert.ok(notes.alert.includes('60s') && notes.alert.includes('long job'), 'mixed: timeout part joins the alert')
+  assert.ok(!notes.alert.includes('build'), 'mixed: completed never leaks into alert')
+}
+assert.deepEqual(renderBackgroundNotes([], [], false, 1000), { info: '', alert: '' }, 'nothing to report → both empty')
 
 // --- briefTaskSummary: a status line, never a whole agent report ---------------
 assert.equal(briefTaskSummary('done'), 'done', 'short single line kept verbatim, no ellipsis')
@@ -154,13 +182,51 @@ assert.ok(
   )
   const body = textOf(chunks)
   assert.ok(body.includes('ok'), 'model text preserved')
-  assert.ok(body.includes('build（completed）'), 'settled background task reported in the turn')
+  assert.ok(!body.includes('build（completed）'), 'all-completed settlement no longer glued into the prose')
+  const thought = reasoningOf(chunks)
+  assert.ok(thought.includes('build（completed）'), 'settled background task reported in the reasoning block instead')
   assert.deepEqual(chunks.at(-1).reason, { kind: 'stop' }, 'successful finish')
   const blockEnd = chunks.find((c) => c.type === 'block-end' && c.index === 0)
   assert.equal(blockEnd.block.text, body, 'block-end text equals the concatenated deltas')
+  const reasoningEnd = chunks.find((c) => c.type === 'block-end' && c.index === 1)
+  assert.equal(reasoningEnd.block.text, thought, 'reasoning block-end equals the concatenated reasoning deltas')
   // The open-input + affordance pair is what lets the CLI spare the task.
   assert.equal(captured[0].options.perTaskStopAffordance, true, 'perTaskStopAffordance declared')
   assert.equal(typeof captured[0].prompt[Symbol.asyncIterator], 'function', 'streaming input used')
+}
+
+// --- toolNarrationChannel:'text' keeps the settlement list in the prose --------
+{
+  const chunks = await collect(
+    { toolNarrationChannel: 'text' },
+    [
+      bg([{ task_id: 't1', type: 'shell', description: 'build' }]),
+      assistant('ok'),
+      result('ok'),
+      bg([]),
+      notif('completed', 'build'),
+    ],
+  )
+  const body = textOf(chunks)
+  assert.ok(body.includes('build（completed）'), "channel 'text' opts back into the prose placement")
+  assert.equal(reasoningOf(chunks), '', 'and nothing goes to reasoning')
+  const blockEnd = chunks.find((c) => c.type === 'block-end' && c.index === 0)
+  assert.equal(blockEnd.block.text, body, 'block-end text equals the concatenated deltas')
+}
+
+// --- a failed background task stays in the prose (severity split) --------------
+{
+  const chunks = await collect({}, [
+    bg([{ task_id: 't1', type: 'shell', description: 'deploy' }]),
+    assistant('ok'),
+    result('ok'),
+    bg([]),
+    notif('failed', 'deploy'),
+  ])
+  const body = textOf(chunks)
+  assert.ok(body.includes('后台任务失败：deploy（failed）'), 'failure surfaces in the prose, not buried in reasoning')
+  assert.ok(!reasoningOf(chunks).includes('deploy'), 'failure not duplicated into reasoning')
+  assert.deepEqual(chunks.at(-1).reason, { kind: 'stop' }, 'a failed background task is not a turn failure')
 }
 
 // --- waitForBackgroundTasks:false restores the one-shot behaviour --------------

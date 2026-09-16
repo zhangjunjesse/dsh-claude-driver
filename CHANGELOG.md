@@ -2,7 +2,207 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/)。变动记录于此。
 
-## [Unreleased]
+## [0.9.0] - 2026-09-16
+
+> 安装注意事项同 0.4.0 三条，不再重复。
+
+### Changed
+- **后台任务清单按严重度分流**（用户反馈：全成功的
+  `[Claude Code 后台任务已结束：…（completed）]` 拼在回答末尾没有作用）。
+  `renderBackgroundNotes` 把结算拆成两档：
+  - **info**（全部 completed 的结算）→ 走 `toolNarrationChannel`（默认思考块，
+    可折叠、不打扰；设 `'text'` 回到旧的正文放置）
+  - **alert**（failed / 超时 / 回合结束仍在运行——产出可能已丢失）→ **始终正文**。
+    这一行才是整个功能存在的理由，绝不允许折叠掉。
+  子代理路径（`subagent-provider`）保持旧的单通道 `renderBackgroundNote`
+  逐字节不变：那里的清单是上级代理要读的**数据**（需要完整结算画面），不是 UI。
+
+## [0.8.0] - 2026-09-16
+
+> 安装注意事项同 0.4.0 三条，不再重复。前端改动需**刷新页面 / 重启 DSH Desktop**
+> 才会加载新 client bundle。
+
+### Added
+- **插件长出客户端半边**：`package.json` 新增 `dsh.client`（platform web、
+  immediately）与 `exports["./client"]`，宿主 `dsh-client-modules` 扫描 loader
+  条目时会把 `client/client.js` 送进浏览器执行。注意 `exports` 字段一旦引入即
+  接管全部子路径解析，必须同时补 `./cordis.patch.yml` 与 `./package.json`
+  子路径，否则 bundle patch 解析会断（照抄 dshmarket 的结构）。
+- **思考框限高**（用户诉求：思考内容一长就把对话撑爆）。注入一条 CSS：
+  展开的 reasoning 正文 `max-height: var(--claude-driver-think-max-height, 320px)`
+  + `overflow-y: auto`。选择器匹配稳定的 `_thinkBody` 类名后缀而非构建哈希
+  （`wM8ffq_` 这类前缀每个 ui-chat 版本都会变）；ui-chat 若整个改名则退化为
+  无操作（回到原生无限高），不可能弄坏聊天页。改高度不用重装：在任意上层容器
+  设 `--claude-driver-think-max-height` 即可。
+- **流式跟随**：限高后若不跟随，流式期间只能看见思考的开头、最新内容藏在滚动
+  条下面——等于白改。MutationObserver + rAF 节流把有溢出的思考框钉在底部；
+  用户向上滚动即解除跟随（从「是否接近底部」自洽推导 pinned 态，无需区分
+  程序滚动与用户滚动），滚回底部自动恢复。
+- `test-client-style.mjs`：钉住宿主真正执行的契约（entry.id = 包名、factory
+  返回 cordis plugin 形状、样式注入在 factory 作用域且不重复注入、exports
+  子路径不回退）。
+
+## [0.7.0] - 2026-09-16
+
+> 安装注意事项同 0.4.0 三条，不再重复。
+
+### Changed
+- **工具旁白搬进思考块**（`toolNarrationChannel: 'reasoning'`，默认）。0.5.0 把
+  `narrateBuiltinTools` 活动行和内置工具错误旁白发在正文 text 块上，实际效果是
+  `[Claude Code] ⚙ Bash · …` 黏在模型句子中间（用户截图实证）。现在两类旁白都
+  追加进可折叠的 reasoning 块：可见性不丢（展开思考即见），正文恢复干净。
+  设 `toolNarrationChannel: 'text'` 回到旧放置；`showToolProgress` 显式开启时
+  仍走正文且逐字节不变（历史承诺不动）。
+  - 附带语义：resume 失败重试 fresh 的守卫本来就同时检查 `openedText` 与
+    `openedReasoning`，旁白换通道后行为等价（narration 一旦流出就不再重试，
+    不会重复输出）。
+
+## [0.6.0] - 2026-09-16
+
+> 安装注意事项同 0.4.0 三条（版本号推进、确认 profile、`dsh plugin` 静默失败用
+> `dsh.cmd` shim），不再重复。
+
+### Added
+- **回合预热**（`prewarm`，默认关；`prewarmTtlMs` 默认 15 分钟）。定位「每条消息
+  固定等十几秒」时拆出的耗时结构：进程启动 0.2s + **CLI 本地初始化 3.5–4s**（API
+  指黑洞地址 init 帧照样出现 ⇒ 纯本地；fresh/resume 一样；CLI 2.1.234/2.1.260 一样）
+  + API 首字 4–6s（每轮 ~4 万 token 固定系统开销）。本地那 4s 是唯一能拿掉的：回合
+  收尾即用 `resume` + 开放式流式输入预启动下一轮进程，下一条消息到达时若完全匹配
+  （resume id / 模型 / 思考档 / 桥接工具集）则直接推入其输入流。实测端到端：
+  冷 9.7s → 领养 4.5s；resume 记忆完好。
+  - 任何不匹配 / 进程死亡 / TTL 过期 / 压缩 / `/claude-fresh` → 废弃预热进程、
+    原样走冷路径，最坏情况等于旧行为。全局最多 2 个空闲进程，跨会话 LRU。
+  - 领养的进程由运行级 `finally` 显式处置：对开放输入的 SDK query 调
+    `iterator.return()` 会**永久挂起**（实测——return 排在一个永不兑现的 next()
+    之后），处置必须走「关输入流（stdin EOF）+ controller.abort()」双保险。
+  - 依赖 `waitForBackgroundTasks`（开放输入传输层）；关闭它则预热静默不生效。
+
+### Changed
+- SDK options 装配抽成 `buildSdkOptions()`，冷路径与预热 spawn 共用同一份，杜绝
+  两处漂移；`buildSdkPrompt` 拆出 `buildPromptBlocks()` 供领养时构造推入消息复用。
+
+### Fixed
+- **重构引入后当场抓回的回归**：at-risk 标记写入引用了缩进 else 分支的
+  `sdkOptions.cwd`，消息循环里成为 ReferenceError 被 try/catch 吞掉 —— 后台任务
+  超时的回合将不再留下抢救标记（`test-agent-harvest` 确定性失败）。提升为循环作用
+  域的 `runCwd` 修复；这正是「每步重构必须全套回归」的又一例证。
+
+### Tests
+- 新增 `test-prewarm.mjs`（8 组）：默认关不产生任何 spawn；开启后回合收尾出现带
+  resume id 的常驻 spawn；兼容轮领养（用户消息推入常驻输入、无冷 spawn、收尾处置）；
+  切模型拒养走冷路径；空闲期死亡的进程拒养；压缩 / `/claude-fresh` 同步废弃；
+  池容量 LRU 淘汰；TTL 到期回收。全套 17/17（含真网络 `test-thinking-stream`）。
+
+## [0.5.0] - 2026-09-16
+
+> 安装注意事项与 0.4.0 条目下的三条完全相同（版本号必须推进、先确认 profile、
+> `dsh plugin` 静默失败要改用 `dsh.cmd` shim），此处不重复。
+
+### Added
+- **内置工具活动旁白**（`narrateBuiltinTools`，默认开）。思考可见性修好后，剩下的
+  黑盒是工具阶段：原生卡片只发给桥接的 DSH 工具，Claude 内置工具（Bash / Read /
+  WebFetch / Task…）没有卡片，唯一兜底 `showToolProgress` 默认关 —— 一轮花一分钟
+  在 Bash 里的回合，在 GUI 上和卡死一模一样。现在在工具**开跑之前**补一行
+  `[Claude Code] ⚙ Bash · npm test`，把随后的沉默归因到具名工具。
+  - 主语按固定键序取（`command`/`file_path`/`path`/`pattern`/`url`/`query`/
+    `description`/`prompt`），**不在表里的键永远不渲染** —— `Write` 显示路径而非
+    文件正文，新增内置工具最差退化成裸工具名，不会漏出任意 blob。压成单行、截 80 字符。
+  - 与 `showToolProgress` 互斥：后者显式打开时优先，旧输出逐字节不变，绝不叠加。
+  - 卡片不可用时（`rendersCard` 因无可 append 的 session 返回 false），桥接工具也
+    走这行旁白 —— 否则它同样零痕迹。
+
+### Fixed
+- **纯工具回合的最终答案被整个丢掉**（`result` 兜底路径）。当一轮从未流出任何 text
+  delta（assistant 消息只有 `tool_use`，答案只存在于 `result.result`）时，兜底分支
+  只做了 `text = fallback` 而没有开 block 0；而函数末尾的 block-end 由 `openedText`
+  把门 —— 于是这一轮以 usage+finish 收场，**一个 text chunk 都没发**，答案静默消失。
+  改为始终开块并以 delta 流出，block-end 仍等于各 delta 之和。测试里有回归断言。
+
+### Tests
+- 新增 `test-builtin-tool-activity.mjs`（14 组断言）：主语取值与 payload 隔离、
+  单行化与截断、桥接工具走卡片不重复旁白、无卡片时的回退、`showToolProgress` 优先级、
+  opt-out 静默、子代理隔离、旁白不得掩盖 `EMPTY_RESPONSE`、以及上面那条答案丢失的回归。
+  离线全套 10/10 通过。
+
+## [0.4.0] - 2026-09-16
+
+> 版本号必须随代码一起推进：profile 用 pnpm `file:` 依赖安装本仓库，**版本号不变
+> 时 pnpm 直接复用 store 里的旧内容、不重新打包**，改了代码也装不进去（表现为
+> 重启 DSH 后行为毫无变化，`node_modules` 里的文件时间戳还停在上次安装那天）。
+
+> **安装前必须先确认装进哪个 profile。** 本机装了 `web` 和 `desktop` 两个 profile，
+> 而 DSH Desktop 实际加载的是 **`web`**（`resources/app` 的包名是 `dsh-plugin-desktop`
+> 这一事实**不能**用来推断 profile 名）。唯一可靠的判定方法：在有活跃回合时抓正在
+> 运行的 CLI 命令行 ——
+> `Get-CimInstance Win32_Process | ? { $_.CommandLine -like '*claude*' }`，
+> 它打印的 `claude.exe` 绝对路径里就写着 profile 名，argv 里还能直接看到这一轮到底
+> 传了哪些 flag。2026-09-16 因为把 0.4.0 装进了没人用的 `desktop`，思考流「修完仍
+> 无效」白查了一整轮。
+>
+> **`dsh plugin` 在本机会静默失败。** 它内部 `spawnSync("pnpm", …)` 不带 `shell`，
+> 而 Windows 上 pnpm 只有 `.cmd` / shell 脚本，Node 直接 ENOENT；表现是**零输出、
+> exit 0、什么都没装**。必须改用 DSH 自己生成的 shim：
+> `AppData/Roaming/DSH Desktop/host-commands/<profile>/generations/*/bin/dsh.cmd`，
+> 它能真正跑起 pnpm 并打印完整日志。
+>
+> 另注：替换 `@anthropic-ai/claude-agent-sdk-*/claude.exe` 时若 DSH 正在运行会
+> `ERR_PNPM_EPERM`（exe 被活着的 CLI 进程占用）。此时 SDK 留在旧版、其余包照常装上，
+> 不影响启动 —— 但要升 SDK 必须先完全退出 DSH。
+>
+> 实测：`--thinking-display summarized` 在 web profile 自带的 CLI 2.1.234 上**同样
+> 生效**（`--help` 没列出它，但二进制里有该 flag，实测 634 字符思考文本），所以这条
+> 修复不依赖 SDK 升级。
+
+### Fixed
+- **模型弹出的选择题在 DSH 里什么都不显示**（新增 `disableBuiltinAskUserQuestion`、
+  `narrateBuiltinToolErrors`、`disallowedTools`，前两者默认开）。模型调用的是 Claude Code
+  的**内置** `AskUserQuestion`（参数 `multiSelect` 驼峰），不是 DSH 那个真能弹卡片的
+  `ask_user_question`（参数 `multi_select`），结果模型收到
+  `The user did not answer the questions.`，而用户屏幕上零痕迹。
+
+  两环因果：
+
+  1. **内置版是被 `canUseTool` 顺带放出来的。** CLI 用「宿主是否注册 `canUseTool`」
+     判断「宿主有没有交互界面」。实测（CLI 2.1.258 / SDK 0.3.260，只改一个变量）：
+     裸 query = 29 个工具、无 `AskUserQuestion`；`+ canUseTool` = **32 个、有**；
+     再加 `disallowedTools:['AskUserQuestion']` = 31、没了。本驱动只要桥接任何 DSH
+     工具就必装 `canUseTool`，于是每轮都被塞进一个假的交互能力声明——可
+     `canUseTool` 只能答允许/拒绝，**渲染不了选择题**。
+  2. **过程完全静默。** 原生卡片只发给桥接的 DSH 工具（`rendersCard` 只匹配
+     `bridgedNames`），内置工具的文本兜底 `showToolProgress` 默认关。两条路都断，
+     一次完整的「提问→park→超时」在 GUI 上零痕迹，与卡死不可区分。
+
+  修法：`disableBuiltinAskUserQuestion` 摘掉内置版，逼模型回落到有卡片的 DSH 工具
+  （**护栏**：仅当这一轮确实桥接了 `ask_user_question` 时才屏蔽，否则会把模型唯一的
+  提问途径一起掐掉）；`narrateBuiltinToolErrors` 给内置工具的失败/「未作答」哨兵补一行
+  旁白，杜绝静默失败。新增 `test-ask-user-question.mjs`（8 组离线断言，覆盖护栏、
+  opt-out、桥接工具不重复播报、子代理隔离、block-end 文本守恒）。
+
+- **思考过程完全不显示（只剩「深度求索中…」转圈）**（新增 `thinkingDisplay`、
+  `thinkingHeartbeat`，默认都开）。当代模型（Sonnet 4.6 / Fable 一代）默认走
+  **redacted thinking（加密思考）**：`thinking_delta` 帧照常到达，但 `delta.thinking`
+  是**空串**，API 只流 ping 和一个 `estimated_tokens` running total（见 sdk.d.ts
+  `SDKThinkingTokensMessage`："during the redacted-thinking phase (where the API
+  otherwise streams only pings)"）。驱动的两处思考提取都要求文本非空
+  （`lib/index.js` 的 `thinking_delta` 分支与整条消息兜底），于是恒被短路——
+  一轮烧掉 650 个思考 token 的回合，**一个 `reasoning-delta` 都没发出去**，
+  GUI 没有思考块可渲染，只剩通用等待动画，用户无法区分「在想」和「卡死」。
+
+  实测对照（2026-09-16，CLI 2.1.258 / SDK 0.3.260 / sonnet，effort=high，同一 prompt）：
+
+  | 配置 | thinking_delta 帧 | 思考文本字符 |
+  |---|---|---|
+  | 默认 | 6 | **0** |
+  | `settings: { showThinkingSummaries: true }`（query 内联） | 4 | **0**（无效，勿用） |
+  | `extraArgs: { 'thinking-display': 'summarized' }` | 39 | **357** |
+
+  两层修复：
+  1. `thinkingDisplay: 'summarized'`（默认）→ 以 CLI flag 请求 API 侧思考摘要，
+     把可读文本要回来。注意 query 的内联 `settings` 传法实测**不生效**，只有 flag 管用。
+  2. `thinkingHeartbeat: true`（默认）→ 消费此前被完全忽略的
+     `system/thinking_tokens` 帧，在加密思考阶段于思考块里写一条会生长的点线
+     （`🤔 思考中（本轮思考内容已加密，仅可见进度） · · 约 550 tokens`），
+     摘要不可用时也保证有活体信号；真实摘要一出现即自动让位。
 
 ### Added
 - **子代理随进程一起死掉时，产出可以捞回来了**（`harvestOrphanedSubagents`，默认开，
