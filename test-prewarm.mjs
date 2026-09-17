@@ -13,6 +13,11 @@
 //   6. compaction / claude-fresh    -> standing process disposed with the chain
 //   7. pool capacity                -> oldest conversation evicted
 //   8. idle TTL                     -> standing process disposed on expiry
+//   9. adoption                     -> idle TTL DISARMED, so a long turn is
+//                                      never killed by its process's old
+//                                      deadline (2026-09-17 incident)
+//  10. adopted entry killed         -> run fails fast and retries cold; a dead
+//                                      transport must never hang the turn
 // Run: node test-prewarm.mjs
 import assert from 'node:assert/strict'
 import {
@@ -21,6 +26,7 @@ import {
   getPrewarmPool,
   getResumeSessions,
   streamClaudeChunks,
+  takePrewarm,
 } from './lib/index.js'
 
 const ctx = { logger: { info: () => {}, warn: () => {} }, get: () => undefined }
@@ -209,6 +215,106 @@ const TURN2 = [
   assert.ok(entry.disposed, 'TTL disposed the idle standing process')
   assert.equal(getPrewarmPool().has('conv-ttl'), false, 'pool slot released on expiry')
   getResumeSessions().delete('conv-ttl')
+}
+
+// Fake whose RESUME (prewarm) spawn stalls after being fed, so an ADOPTED turn
+// keeps running past the standing process's original idle deadline. Fresh
+// spawns answer immediately — that is the cold-retry path, and giving it a
+// different text makes "the adopted session survived" and "it was killed and we
+// silently fell back" distinguishable in one assertion.
+function fakeSlowPrewarm(calls, { stallMs, resumeText = 'done', freshText = 'recovered' } = {}) {
+  return ({ prompt, options }) => {
+    const isResume = options.resume !== undefined
+    const call = { options, fed: [], kind: isResume ? 'resume' : 'fresh' }
+    calls.push(call)
+    return (async function* () {
+      for await (const message of prompt) {
+        call.fed.push(message)
+        break
+      }
+      if (call.fed.length === 0) return // input closed unfed => stdin EOF exit
+      if (isResume) await new Promise((resolve) => setTimeout(resolve, stallMs))
+      yield { type: 'system', subtype: 'init', session_id: 's1' }
+      yield {
+        type: 'result',
+        subtype: 'success',
+        session_id: 's1',
+        result: isResume ? resumeText : freshText,
+        usage: { output_tokens: 1 },
+      }
+    })()
+  }
+}
+
+// --- 9. leaving the pool disarms the idle TTL --------------------------------
+// Regression (2026-09-17): the TTL timer was armed at creation and never
+// cleared on adoption, so a standing process adopted at 09:51:58 was killed at
+// 09:54:56 by its original 15-minute deadline — mid-answer. The turn then spun
+// for ~50 minutes because nothing told the run its transport had died.
+{
+  // 9a. The chokepoint itself, with no timing involved.
+  const calls = []
+  const settings = { queryImpl: fakeQuery(calls), waitForBackgroundTasks: true, prewarm: true, prewarmTtlMs: 50 }
+  await runTurn('conv-disarm', TURN1, settings)
+  const entry = getPrewarmPool().get('conv-disarm')
+  assert.ok(entry.timer !== undefined, 'an entry sitting in the pool is on the idle clock')
+  const taken = takePrewarm('conv-disarm')
+  assert.equal(taken, entry, 'takePrewarm hands back the standing entry')
+  assert.equal(entry.timer, undefined, 'leaving the pool disarms the idle TTL')
+  assert.equal(entry.disposed, false, 'taking an entry must not dispose it')
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  assert.equal(entry.disposed, false, 'the lapsed deadline no longer touches an entry that left the pool')
+  entry.dispose('test cleanup')
+  getResumeSessions().delete('conv-disarm')
+}
+{
+  // 9b. End to end: an adopted turn that outlives the deadline still answers
+  // from the adopted session ('done'), not from a silent cold retry.
+  const calls = []
+  const settings = {
+    queryImpl: fakeSlowPrewarm(calls, { stallMs: 150 }),
+    waitForBackgroundTasks: true,
+    prewarm: true,
+    prewarmTtlMs: 40,
+  }
+  await runTurn('conv-outlive', TURN1, settings)
+  const chunks = await runTurn('conv-outlive', TURN2, settings)
+  assert.equal(textOf(chunks), 'done', 'the adopted session survived its original idle deadline')
+  assert.equal(finishOf(chunks).reason.kind, 'stop')
+  assert.equal(
+    calls.filter((c) => c.kind === 'fresh').length,
+    1,
+    'only turn 1 spawned fresh — no cold retry, so the adopted transport was never killed',
+  )
+  drainPool()
+  getResumeSessions().delete('conv-outlive')
+}
+
+// --- 10. an adopted entry killed mid-stream fails fast, never hangs -----------
+// Defence in depth for the same hazard: whatever kills a live transport, the
+// run must find out in milliseconds. The SDK iterator does not reliably end on
+// abort, so dispose() has to wake the consumer itself.
+{
+  const calls = []
+  const settings = {
+    queryImpl: fakeSlowPrewarm(calls, { stallMs: 3000 }),
+    waitForBackgroundTasks: true,
+    prewarm: true,
+  }
+  await runTurn('conv-killed', TURN1, settings)
+  const entry = getPrewarmPool().get('conv-killed')
+  const started = Date.now()
+  const turn = runTurn('conv-killed', TURN2, settings)
+  await new Promise((resolve) => setTimeout(resolve, 30)) // let the turn adopt and push
+  assert.ok(entry.ended === false, 'the adopted transport is live before the kill')
+  entry.dispose('simulated external kill')
+  const chunks = await turn
+  const elapsed = Date.now() - started
+  assert.ok(elapsed < 1500, `the run must not wait out the dead transport (took ${elapsed}ms)`)
+  assert.equal(textOf(chunks), 'recovered', 'the run retried cold and still answered')
+  assert.equal(finishOf(chunks).reason.kind, 'stop')
+  drainPool()
+  getResumeSessions().delete('conv-killed')
 }
 
 console.log('test-prewarm: all assertions passed')
