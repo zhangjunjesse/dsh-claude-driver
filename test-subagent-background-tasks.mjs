@@ -70,7 +70,7 @@ async function run(settings, messages) {
   )
   assert.equal(outcome.stopReason, 'completed', 'successful finish')
   assert.ok(text.startsWith('ok'), 'model text preserved')
-  assert.ok(text.includes('build(completed)'), 'settled background task reported')
+  assert.ok(text.includes('build (completed)'), 'settled background task reported')
   // The open-input + affordance pair is what lets the CLI spare the task.
   assert.equal(captured[0].options.perTaskStopAffordance, true, 'perTaskStopAffordance declared')
   assert.equal(typeof captured[0].prompt[Symbol.asyncIterator], 'function', 'streaming input used')

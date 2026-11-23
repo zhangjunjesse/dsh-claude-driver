@@ -71,7 +71,7 @@ const reasoningOf = (chunks) => chunks.filter((c) => c.type === 'reasoning-delta
 // --- renderBackgroundNote shape ------------------------------------------------
 assert.equal(renderBackgroundNote([], [], false, 1000), '', 'nothing to report → no note')
 assert.ok(
-  renderBackgroundNote([{ status: 'completed', summary: 'build' }], [], false, 1000).includes('build(completed)'),
+  renderBackgroundNote([{ status: 'completed', summary: 'build' }], [], false, 1000).includes('build (completed)'),
   'settled task named with its status',
 )
 assert.ok(
@@ -86,7 +86,7 @@ assert.ok(
 // --- renderBackgroundNotes: severity split for the main session ----------------
 {
   const notes = renderBackgroundNotes([{ status: 'completed', summary: 'build' }], [], false, 1000)
-  assert.ok(notes.info.includes('build(completed)'), 'completed settlement goes to info')
+  assert.ok(notes.info.includes('build (completed)'), 'completed settlement goes to info')
   assert.equal(notes.alert, '', 'all-completed → no alert')
 }
 {
@@ -101,9 +101,9 @@ assert.ok(
     true,
     60000,
   )
-  assert.ok(notes.info.includes('build(completed)'), 'mixed: completed stays info')
+  assert.ok(notes.info.includes('build (completed)'), 'mixed: completed stays info')
   assert.ok(!notes.info.includes('deploy'), 'mixed: failure never leaks into info')
-  assert.ok(notes.alert.includes('deploy(failed)'), 'mixed: failure in alert')
+  assert.ok(notes.alert.includes('deploy (failed)'), 'mixed: failure in alert')
   assert.ok(notes.alert.includes('60s') && notes.alert.includes('long job'), 'mixed: timeout part joins the alert')
   assert.ok(!notes.alert.includes('build'), 'mixed: completed never leaks into alert')
 }
@@ -133,11 +133,11 @@ assert.equal(briefTaskSummary(undefined), '', 'undefined → empty')
 assert.equal(briefTaskSummary(null), '', 'null → empty')
 assert.equal(briefTaskSummary('\n\n  真正的内容\n后面还有'), '真正的内容…', 'blank leading lines skipped')
 assert.ok(
-  renderBackgroundNote([{ status: 'completed', taskId: 'task-7', summary: '' }], [], false, 1000).includes('task-7(completed)'),
+  renderBackgroundNote([{ status: 'completed', taskId: 'task-7', summary: '' }], [], false, 1000).includes('task-7 (completed)'),
   'empty summary falls back to the taskId',
 )
 assert.ok(
-  renderBackgroundNote([{ status: 'completed', taskId: 'task-7' }], [], false, 1000).includes('task-7(completed)'),
+  renderBackgroundNote([{ status: 'completed', taskId: 'task-7' }], [], false, 1000).includes('task-7 (completed)'),
   'missing summary falls back to the taskId',
 )
 
@@ -182,9 +182,9 @@ assert.ok(
   )
   const body = textOf(chunks)
   assert.ok(body.includes('ok'), 'model text preserved')
-  assert.ok(!body.includes('build(completed)'), 'all-completed settlement no longer glued into the prose')
+  assert.ok(!body.includes('build (completed)'), 'all-completed settlement no longer glued into the prose')
   const thought = reasoningOf(chunks)
-  assert.ok(thought.includes('build(completed)'), 'settled background task reported in the reasoning block instead')
+  assert.ok(thought.includes('build (completed)'), 'settled background task reported in the reasoning block instead')
   assert.deepEqual(chunks.at(-1).reason, { kind: 'stop' }, 'successful finish')
   const blockEnd = chunks.find((c) => c.type === 'block-end' && c.index === 0)
   assert.equal(blockEnd.block.text, body, 'block-end text equals the concatenated deltas')
@@ -208,7 +208,7 @@ assert.ok(
     ],
   )
   const body = textOf(chunks)
-  assert.ok(body.includes('build(completed)'), "channel 'text' opts back into the prose placement")
+  assert.ok(body.includes('build (completed)'), "channel 'text' opts back into the prose placement")
   assert.equal(reasoningOf(chunks), '', 'and nothing goes to reasoning')
   const blockEnd = chunks.find((c) => c.type === 'block-end' && c.index === 0)
   assert.equal(blockEnd.block.text, body, 'block-end text equals the concatenated deltas')
