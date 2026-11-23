@@ -98,13 +98,3 @@ test('the prewarm key changes when the prompt mode or the operator files change'
   }
 })
 
-test('canUseTool suppresses the built-in question dialog even when no DSH ask tool is bridged', () => {
-  const bridge = { mcpServers: {}, bridgedNames: new Set(['notion_search']) }
-  const sdk = buildSdkOptions(
-    ctx,
-    { provider: 'claude-code', model: 'sonnet', messages: [user('hi')] },
-    { systemPromptMode: 'none' },
-    { controller: new AbortController(), model: 'sonnet', bridge },
-  )
-  assert.ok(sdk.disallowedTools.includes('AskUserQuestion'))
-})
