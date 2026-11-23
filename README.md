@@ -434,6 +434,23 @@ cd ~/.dsh/profiles/node_modules/dsh-claude-driver && npm i --no-save
 - **界面**：会话模型选择器 → "Claude Code" 分组 → 选模型（默认 fable，重活用 opus）
 - **或 settings.yaml**：`agent-default-model` 改为 `provider: claude-code` / `model: fable`
 
+## 省 token 的前端模式（可选）
+
+Claude Code 的每一轮都要重发系统提示与全部工具 schema。实测本机一个装满插件的 DSH 会话（65 个工具）工具 schema 共 63 KB ≈ **15.7k tokens**，其中 DSH 核心工具约 **6.6k**、插件工具（cu/blender/notion…）约 **9.2k**；DSH 系统提示另计。两处开关可以把它压下来：
+
+```yaml
+- id: claude-driver
+  config:
+    bridgeTools: 'plugins'      # 只桥接插件工具，核心工具交给 Claude 内置 + DSH 卡片镜像
+    systemPromptMode: 'user'    # 只带 ~/.dsh/AGENTS.md 与工作区 AGENTS.md；或 'none' 全不带
+    # bridgeToolNames: ['ask_user_question']   # 默认值；需要 DSH 提问卡片时保留
+```
+
+- **核心工具不再重复下发**：Claude 的 `Bash`/`Read`/`Edit`/`Grep`/`Glob`/`WebFetch`/`WebSearch` 是唯一的核心工具集，调用仍由 `builtinToolCards` 1:1 镜像成 DSH 原生卡片（`bash`/`read`/`edit`…），所以界面与审批不变；它们的执行发生在 Claude Code 内，**不经过 DSH 的文件系统沙箱**（需要审批时开 `approveBuiltinTools`）。
+- **插件工具照旧桥接**：cu/blender/notion 等 `DSH_CORE_TOOLS` 之外的工具仍走 MCP 桥 + DSH 沙箱/审批。
+- **会失去的**：`skill`、`present`、`schedule_*`、`subagent`、`job_*`、目标工具等核心工具不再出现在 Claude 的工具列表里（需要谁就把名字加进 `bridgeToolNames`）；`systemPromptMode:'user'` 也不再带 DSH 的内置行为提示和插件提示段。
+- 想把 `coreTools` 列表调准：见 `lib/index.js` 的 `DSH_CORE_TOOLS`，或用配置覆盖。
+
 ## 配置项
 
 | 键 | 默认 | 说明 |
@@ -469,7 +486,11 @@ cd ~/.dsh/profiles/node_modules/dsh-claude-driver && npm i --no-save
 | `narrateBuiltinTools` | `true` | 内置工具带主语的活动旁白（`⚙ Bash · npm test`，见下节） |
 | `toolNarrationChannel` | `'reasoning'` | 工具旁白放思考块（默认）还是正文（`'text'`，0.5.0 行为） |
 | `nativeToolCards` | `true` | 桥接工具原生卡片 |
-| `bridgeTools` | `true` | DSH 工具桥接 |
+| `bridgeTools` | `true` | DSH 工具桥接：`true` 全桥，`'plugins'` 只桥接 `DSH_CORE_TOOLS` 之外的插件工具（Claude 内置工具就是核心工具集，DSH 同名工具不再重复下发），`false` 全关 |
+| `coreTools` | _(unset)_ | `bridgeTools:'plugins'` 时用于覆盖内置的 DSH 核心工具名集合 |
+| `bridgeToolNames` | `['ask_user_question']` | 即使属于 DSH 核心工具也强制桥接的名字；内置 `AskUserQuestion` 在 DSH 里无法渲染，所以默认保留 DSH 提问卡片 |
+| `systemPromptMode` | `'full'` | 系统提示：`'full'` 追加 DSH 组装的完整提示与 system 消息；`'user'` 只追加操作者指令文件；`'none'` 不追加（只用 Claude Code 自带预设） |
+| `userPromptFiles` | _(unset)_ | `systemPromptMode:'user'` 的指令文件（绝对路径）；默认 `~/.dsh/AGENTS.md` + 工作区及其上级目录的 `AGENTS.md`，合计上限 64 KiB |
 | `registerCatalog` | `true` | 进模型选择器 |
 | `waitForBackgroundTasks` | `true` | 持有本步直到后台任务跑完（否则它们被杀） |
 | `backgroundTaskTimeoutMs` | `300000` | 上述持有的上限（5 分钟） |
