@@ -64,9 +64,19 @@ test('a window that is nearly used up is flagged, a fresh one is not', () => {
   )
 })
 
-test('the bar only shows for a Claude session that has plan windows', () => {
+test('the bar shows before the first finished turn when the session route is Claude', () => {
   assert.equal(barSegments({ stats: { costUsd: 1 }, snapshot: { ok: true, windows: windows() } }).visible, true)
-  assert.equal(barSegments({ stats: null, snapshot: { ok: true, windows: windows() } }).visible, false, 'a session with no Claude turns must not carry a Claude bar')
+  assert.equal(
+    barSegments({ stats: null, snapshot: { ok: true, windows: windows() }, provider: 'claude-code', route: 'claude-code' }).visible,
+    true,
+    'a goal-first session must get the meter before its first turn ends',
+  )
+  assert.equal(
+    barSegments({ stats: null, snapshot: { ok: true, windows: windows() }, provider: 'claude-code', route: 'deepseek' }).visible,
+    false,
+    'another model\'s session must not carry a Claude bar',
+  )
+  assert.equal(barSegments({ stats: null, snapshot: { ok: true, windows: windows() }, provider: 'claude-code' }).visible, false, 'no route, no bar')
   assert.equal(barSegments({ stats: { costUsd: 1 }, snapshot: { ok: false } }).visible, false)
 })
 

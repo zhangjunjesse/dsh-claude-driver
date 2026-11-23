@@ -87,6 +87,19 @@ test('the usage route serves the latest snapshot as JSON', async () => {
   await registered.handler({ method: 'GET', url: USAGE_ROUTE }, res)
   assert.equal(res.statusCode, 200)
   assert.equal(JSON.parse(body).snapshot.windows.fiveHour.percent, 42)
+  assert.equal(JSON.parse(body).provider, 'claude-code', 'the client must know which route owns this meter')
+})
+
+test('the usage route names a custom provider so the bar can match the session route', async () => {
+  const store = createUsageStore(() => 5)
+  await store.refresh(withUsage(async () => ({ rate_limits_available: true, rate_limits: RATE_LIMITS })))
+  let registered
+  const webCtx = { effect: (fn) => fn(), get: (name) => (name === 'webServer' ? { register: (route) => (registered = route) } : undefined) }
+  registerUsageRoute({ inject: (_names, fn) => fn(webCtx) }, store, 'claude-alt')
+  let body = ''
+  const res = { statusCode: 0, setHeader() {}, end(text) { body = text } }
+  await registered.handler({ method: 'GET', url: USAGE_ROUTE }, res)
+  assert.equal(JSON.parse(body).provider, 'claude-alt')
 })
 
 test('a turn refreshes plan usage from the query that ran it', async () => {

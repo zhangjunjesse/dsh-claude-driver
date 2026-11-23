@@ -124,6 +124,17 @@ DSH's `/compact` and its automatic compaction both compact the **live Claude Cod
 
 DSH may ask for a summary more than once without a user turn in between (it retries when a summary is not small enough). Claude is compacted once; repeat requests reuse the same summary until the session runs another turn.
 
+## Five-hour usage stop
+
+The Claude plan's 5-hour window is account-wide, so one long goal turn can consume the quota for every other session. At `usageStopPercent` (default `95`) of that window the driver:
+
+1. finishes the tool call in flight and keeps its result, then ends the turn at that boundary with a visible notice (never mid-write, never as an error);
+2. pauses the session's active goal, so no further round starts against the stopped guard;
+3. compacts the live Claude session once with Claude's own `/compact`, so resuming later does not replay the full history;
+4. refuses every new `claude-code` turn in the host (main model and subagents) until the window resets.
+
+When the window resets the stop lifts by itself; a goal paused by the stop stays paused until you resume it. Internal maintenance calls (session title, compaction) still run. Set `usageStopPercent: false` to disable the guard, or `usageStopCompaction: false` to stop without spending the extra compaction request.
+
 ## Install
 
 Prerequisite: the `claude` CLI is installed and logged in (or the SDK's platform binary is present).
@@ -477,6 +488,8 @@ cd ~/.dsh/profiles/node_modules/dsh-claude-driver && npm i --no-save
 | `autoInstallCli` | `true` | 本机没有可用的 Claude Code CLI 时才自动安装（先检查：配置路径 → SDK 自带 → 私有安装 → `~/.local/bin` → PATH）；`false` 只报告不安装 |
 | `preferDshTools` | `true` | DSH 提供同类功能时（计划模式、定时、待办、网页搜索/抓取），隐藏 Claude Code 的重复内置工具（`EnterPlanMode`/`ExitPlanMode`、`Cron*`、`TodoWrite`、`WebSearch`/`WebFetch`），以 DSH 为准 |
 | `nativeCompaction` | `true` | DSH 压缩时让 Claude Code 用自己的 `/compact` 压缩同一会话（同一 session id），并把 Claude 的摘要作为 DSH 摘要；失败时回落为一次性摘要 + 新会话 |
+| `usageStopPercent` | `95` | 5 小时套餐窗口用到此百分比时，当前回合在安全边界停下（保留已完成的工具结果），到窗口重置前拒绝所有 Claude 回合（含子代理）；`false` 关闭 |
+| `usageStopCompaction` | `true` | 用量停摆后是否用 Claude 自己的 `/compact` 压缩一次在线会话，便于重置后续跑 |
 | `models` | _(unset)_ | 仅在需要固定/改名时设置；默认由 Claude Code 自己的 `supportedModels()` 提供名称（如 `Sonnet 5.5`）、版本与上下文窗口，新模型发布后自动出现 |
 | `modelRefreshMs` | `600000` | 成功发现后的缓存时长；到期自动刷新，新模型无需重启即出现 |
 | `modelRetryMs` | `30000` | 发现失败后的重试间隔（不会永久缓存失败结果） |

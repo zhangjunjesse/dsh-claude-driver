@@ -4,12 +4,16 @@
 
 ## Unreleased
 
+### Fixed
+- Sessions whose FIRST turn is a goal round (hours long, one DSH step) showed neither the Claude dock meter nor the context ring: the bar waited for a finished turn's stats, and the token meter only saw usage when the turn settled. The bar now appears as soon as the session route is `claude-code`, and each built-in tool card settlement carries the request's usage so context pressure moves during the turn.
+
 ### Changed
 - Every user-visible driver string is English now: background-task notes, tool-progress
   and built-in failure lines, the thinking heartbeat, the max-turns note, and the
   subagent recovery report/narration (previously mixed Chinese/English).
 
 ### Added
+- `usageStopPercent` (default `95`): when the Claude plan's 5-hour window reaches that utilization, the running turn ends at its next safe boundary with a notice, the active goal is paused, the live session is compacted once (`usageStopCompaction`), and every new `claude-code` turn (main model and subagents) is refused until the window resets. `false` disables the guard.
 - `bridgeTools: 'plugins'` bridges only tools outside `DSH_CORE_TOOLS`, so Claude Code's built-ins are the single core toolset and their DSH twins stop consuming MCP schema tokens; `builtinToolCards` still mirrors built-in calls to DSH cards. `coreTools` and `bridgeToolNames` tune the set.
 - `systemPromptMode: 'full' | 'user' | 'none'` plus `userPromptFiles`: `'user'` appends only operator instruction files (`~/.dsh/AGENTS.md` + workspace `AGENTS.md`, 64 KiB cap) instead of the full DSH prompt and system messages. Prewarm keys include the mode and file contents.
 - README: an **Optimizations** section covering plugin-only tool bridging, operator-only prompts (with measured token counts), the `t3-code` entrypoint quota workaround, prompt caching, and effort/latency levers.

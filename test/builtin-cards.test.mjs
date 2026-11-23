@@ -101,6 +101,22 @@ test('several tools in one assistant message each get a card, in order', async (
 // token-meter and session-stats projections index it on every snapshot, so a
 // pairing message without one breaks history loading with
 // "Cannot read properties of undefined (reading 'length')".
+test('a card settlement carries the request usage so the context meter moves mid-turn', async () => {
+  const usage = { input_tokens: 1200, output_tokens: 30, cache_read_input_tokens: 800, cache_creation_input_tokens: 100 }
+  const events = [
+    { type: 'assistant', session_id: 's1', message: { content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } }], usage } },
+    toolResult('t1', 'x'),
+  ]
+  const { session } = await run(events)
+  const settlement = session.events.find((event) => event.type === 'assistant/message')
+  assert.deepEqual(settlement.data.usage, {
+    inputTokens: 1200,
+    outputTokens: 30,
+    cacheReadTokens: 800,
+    cacheWriteTokens: 100,
+  })
+})
+
 test('every assistant/message settlement carries a stream array', async () => {
   const { session } = await run([toolUse('t1', 'Bash', { command: 'ls' }), toolResult('t1', 'x')])
   const settlements = session.events.filter((e) => e.type === 'assistant/message')

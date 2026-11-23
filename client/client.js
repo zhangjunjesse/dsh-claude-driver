@@ -119,10 +119,11 @@ window.__ModuleLoader__.load({
 		/**
 		 * The bar's content, as plain data: the label, the session price for the
 		 * card ("n/a" when unpriced, null before any turn) and the plan windows that
-		 * Claude reports, rounded. It is only visible for a session that has run
-		 * Claude turns, so other models' sessions never carry a Claude meter.
+		 * Claude reports, rounded. A session that has run Claude turns owns it
+		 * through its stats; a session routed to this provider owns it before the
+		 * first turn settles too, so other models' sessions never carry it.
 		 */
-		function barSegments({ stats, snapshot }) {
+		function barSegments({ stats, snapshot, provider, route }) {
 			const cost = stats ? (stats.costUsd === null ? "n/a" : `$${stats.costUsd.toFixed(4)}`) : null;
 			const windows = snapshot?.ok === true
 				? WINDOW_LABELS.filter(([key]) => snapshot.windows?.[key]).map(([key, label, title]) => {
@@ -130,7 +131,11 @@ window.__ModuleLoader__.load({
 						return { key, label, title, percent: Math.round(raw), tone: raw >= 90 ? "danger" : raw >= 70 ? "warn" : "", resetsAt: snapshot.windows[key].resetsAt };
 					})
 				: [];
-			return { label: "Claude", cost, windows, visible: Boolean(stats) && windows.length > 0 };
+			// Before the first turn settles there are no session stats, but a
+			// session already routed to this provider (a goal-first session whose
+			// first turn runs for hours) still owns the meter.
+			const onRoute = typeof provider === "string" && provider !== "" && route === provider;
+			return { label: "Claude", cost, windows, visible: windows.length > 0 && (Boolean(stats) || onRoute) };
 		}
 
 		const usageResetIn = (iso) => {
@@ -227,7 +232,8 @@ window.__ModuleLoader__.load({
 			/** One dock meter: the Claude label and the 5h / weekly rings; click for the card. */
 			function ClaudeBar({ useProjection }) {
 				const stats = useProjection("claudeSessionStats");
-				const [snapshot, setSnapshot] = React.useState(null);
+				const selection = useProjection("modelSelection");
+				const [usage, setUsage] = React.useState(null);
 				const [open, setOpen] = React.useState(false);
 				const rootRef = React.useRef(null);
 				const panelRef = React.useRef(null);
@@ -238,7 +244,8 @@ window.__ModuleLoader__.load({
 						fetch(USAGE_ROUTE, { cache: "no-store", headers: { accept: "application/json" } })
 							.then((response) => response.json())
 							.then((payload) => {
-								if (alive && payload?.snapshot) setSnapshot(payload.snapshot);
+								if (!alive) return;
+								setUsage({ snapshot: payload?.snapshot ?? null, provider: typeof payload?.provider === "string" ? payload.provider : null });
 							})
 							.catch(() => {});
 					void load();
@@ -250,7 +257,8 @@ window.__ModuleLoader__.load({
 				}, []);
 				useDismiss(open, close, rootRef, panelRef);
 				const position = useAnchoredPlacement(open, rootRef, panelRef);
-				const bar = barSegments({ stats, snapshot });
+				const route = selection?.next?.provider ?? selection?.lastUsed?.provider ?? null;
+				const bar = barSegments({ stats, snapshot: usage?.snapshot ?? null, provider: usage?.provider ?? null, route });
 				if (!bar.visible) return null;
 
 				const worst = bar.windows.reduce((tone, w) => (w.tone === "danger" || (w.tone === "warn" && tone !== "danger") ? w.tone : tone), "");
