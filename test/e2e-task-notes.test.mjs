@@ -1,5 +1,5 @@
 // Real Claude CLI against a local Anthropic API double. These are the exact ways
-// a task can end that used to produce a wrong "后台任务失败" note.
+// a task can end that used to produce a wrong "background tasks failed" note.
 import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -44,33 +44,33 @@ async function turn(input, config = {}, { abortAfterMs } = {}) {
 
 test('e2e: a long foreground command that fails (exit 143) is NOT a "background task failed" note', opts, async () => {
   const { all, chunks } = await turn({ command: 'sleep 6; exit 143', description: 'Write failing tests first' })
-  assert.ok(!/后台任务/.test(all), all)
+  assert.ok(!/background tasks/i.test(all), all)
   assert.equal(chunks.at(-1).reason.kind, 'stop')
 })
 
 test('e2e: a background command that fails is reported as failed with its description', opts, async () => {
   const { text } = await turn({ command: 'sleep 1; exit 3', description: 'Failing job', run_in_background: true })
-  assert.match(text, /后台任务失败：.*Failing job/)
+  assert.match(text, /background tasks failed:.*Failing job/i)
 })
 
 test('e2e: a background command that succeeds is reported once, as finished', opts, async () => {
   const { all } = await turn({ command: 'sleep 1; echo ok', description: 'Short job', run_in_background: true })
   assert.equal((all.match(/Short job/g) ?? []).length, 1, all)
-  assert.ok(!/后台任务失败/.test(all))
+  assert.ok(!/background tasks failed/i.test(all))
 })
 
 test('e2e: a background task still running at the turn deadline is "possibly terminated", never "failed"', opts, async () => {
   const { text } = await turn({ command: 'sleep 60', description: 'Long job', run_in_background: true }, { backgroundTaskTimeoutMs: 3000 })
-  assert.match(text, /超过 3s 上限.*Long job/)
-  assert.ok(!/后台任务失败/.test(text))
+  assert.match(text, /exceeded the 3s hold.*Long job/)
+  assert.ok(!/background tasks failed/i.test(text))
 })
 
 test('e2e: interrupting the turn ends the task and says so; it does not claim it is still running', opts, async () => {
   const marker = join(tmpdir(), `bg-marker-${process.pid}`)
   rmSync(marker, { force: true })
   const { text } = await turn({ command: `sleep 8; touch ${marker}`, description: 'Marker job', run_in_background: true }, {}, { abortAfterMs: 4000 })
-  assert.ok(!/仍在运行/.test(text), text)
-  assert.match(text, /被中断.*Marker job/)
+  assert.ok(!/still running/i.test(text), text)
+  assert.match(text, /interrupted.*Marker job/i)
   await new Promise((r) => setTimeout(r, 7000))
   assert.equal(existsSync(marker), false, 'the interrupted task really died')
 })

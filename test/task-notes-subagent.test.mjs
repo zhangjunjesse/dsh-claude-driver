@@ -21,15 +21,15 @@ async function out(events) {
 
 test('a failed FOREGROUND command inside the delegated run is not reported as a failed background task', async () => {
   const text = await out([started('f1', { is_backgrounded: false }), note('f1', 'failed', 'Write failing tests first')])
-  assert.ok(!/后台任务/.test(text), text)
+  assert.ok(!/background tasks/i.test(text), text)
 })
 
 test('a real background task that failed is reported to the parent', async () => {
   const text = await out([level('b1'), started('b1'), note('b1', 'failed', 'Server crashed'), level()])
-  assert.match(text, /后台任务失败：Server crashed（failed）/)
+  assert.match(text, /background tasks failed: Server crashed \(failed\)/i)
 })
 
 test('a stopped task is reported as stopped, not failed', async () => {
   const text = await out([level('b1'), started('b1'), note('b1', 'stopped', 'Server'), level()])
-  assert.ok(!/后台任务失败/.test(text), text)
+  assert.ok(!/background tasks failed/i.test(text), text)
 })

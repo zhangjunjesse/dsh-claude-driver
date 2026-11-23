@@ -70,7 +70,7 @@ async function run(settings, messages) {
   )
   assert.equal(outcome.stopReason, 'completed', 'successful finish')
   assert.ok(text.startsWith('ok'), 'model text preserved')
-  assert.ok(text.includes('build（completed）'), 'settled background task reported')
+  assert.ok(text.includes('build (completed)'), 'settled background task reported')
   // The open-input + affordance pair is what lets the CLI spare the task.
   assert.equal(captured[0].options.perTaskStopAffordance, true, 'perTaskStopAffordance declared')
   assert.equal(typeof captured[0].prompt[Symbol.asyncIterator], 'function', 'streaming input used')
@@ -112,7 +112,7 @@ async function run(settings, messages) {
     assistant('ok'),
     result('ok'),
   ])
-  assert.ok(text.includes('仍在运行'), 'still-running task named')
+  assert.ok(text.includes('still running'), 'still-running task named')
   assert.ok(text.includes('long job'))
   assert.equal(outcome.stopReason, 'completed', 'still a successful run')
 }
@@ -127,7 +127,7 @@ async function run(settings, messages) {
     bg([{ task_id: 't1', type: 'shell', description: 'long job' }]),
     notif('completed', 'never observed'),
   ])
-  assert.ok(text.includes('上限'), 'timeout narrated')
+  assert.ok(text.includes('hold'), 'timeout narrated')
   assert.ok(!text.includes('never observed'), 'stopped draining at the deadline')
   assert.equal(outcome.stopReason, 'completed', 'timeout is not a run failure')
 }
@@ -140,7 +140,7 @@ async function run(settings, messages) {
   ])
   assert.equal(outcome.stopReason, 'error', 'failures still surface as errors')
   assert.equal(outcome.detail, 'boom')
-  assert.ok(!text.includes('仍在运行'), 'no background narration attached to a failed run')
+  assert.ok(!text.includes('still running'), 'no background narration attached to a failed run')
 }
 
 console.log('test-subagent-background-tasks: all assertions passed')

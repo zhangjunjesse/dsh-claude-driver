@@ -106,7 +106,7 @@ assert.equal(
   assert.ok(reasonings.includes(renderBuiltinToolActivity('Read', { file_path: 'lib/index.js' })), 'Read activity emitted on reasoning')
   assert.ok(!texts.some((t) => t.includes('⚙')), 'the prose carries no activity lines')
   assert.ok(
-    chunks.every((c) => (c.type !== 'text-delta' && c.type !== 'reasoning-delta') || !c.text.includes('正在调用工具')),
+    chunks.every((c) => (c.type !== 'text-delta' && c.type !== 'reasoning-delta') || !c.text.includes('calling tool')),
     'legacy showToolProgress wording is NOT used',
   )
   assert.ok(

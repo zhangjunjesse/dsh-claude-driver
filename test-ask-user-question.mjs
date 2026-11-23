@@ -123,12 +123,12 @@ async function run(ctx, tools, settings) {
   // 0.7.0: driver narration rides the reasoning block by default
   // (DEFAULTS.toolNarrationChannel), keeping the prose clean.
   const narrated = chunks.filter((c) => c.type === 'reasoning-delta').map((c) => c.text).join('')
-  assert.ok(narrated.includes('无法在 DSH 中显示'), `swallowed question must be narrated, got: ${narrated}`)
+  assert.ok(narrated.includes('cannot render its card in DSH'), `swallowed question must be narrated, got: ${narrated}`)
   // block-end text must still equal the sum of the deltas.
   const end = chunks.find((c) => c.type === 'block-end' && c.block?.type === 'reasoning')
   assert.strictEqual(end.block.text, narrated, 'block-end text must equal the sum of reasoning deltas')
   const prose = chunks.filter((c) => c.type === 'text-delta').map((c) => c.text).join('')
-  assert.ok(!prose.includes('无法在 DSH 中显示'), 'the note must NOT be glued into the prose')
+  assert.ok(!prose.includes('cannot render its card in DSH'), 'the note must NOT be glued into the prose')
 }
 
 // --- 6. bridged-tool errors are NOT double-narrated (card owns them) --------
@@ -166,7 +166,7 @@ async function run(ctx, tools, settings) {
 }
 
 // --- 8. note renderer shapes ------------------------------------------------
-assert.ok(renderBuiltinToolErrorNote(BUILTIN_ASK_USER_QUESTION, '').includes('无法在 DSH 中显示'))
+assert.ok(renderBuiltinToolErrorNote(BUILTIN_ASK_USER_QUESTION, '').includes('cannot render its card in DSH'))
 assert.ok(renderBuiltinToolErrorNote('Bash', 'exit 1').includes('Bash'))
 assert.strictEqual(renderBuiltinToolErrorNote('Bash', ''), '', 'empty non-ask failure narrates nothing')
 

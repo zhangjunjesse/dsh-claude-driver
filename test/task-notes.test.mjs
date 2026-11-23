@@ -28,24 +28,24 @@ async function run(events, settings = {}) {
 
 test('a failed FOREGROUND task (CLI says is_backgrounded:false) is never a "background task failed" note', async () => {
   const { all } = await run([started('f1', { is_backgrounded: false }), note('f1', 'failed')])
-  assert.ok(!/后台任务/.test(all), all)
+  assert.ok(!/background tasks/i.test(all), all)
 })
 
 test('a foreground task whose task_started was never seen is not reported either (it never appeared in the live set)', async () => {
   const { all } = await run([note('ghost', 'failed', 'Write failing tests first')])
-  assert.ok(!/后台任务/.test(all), all)
+  assert.ok(!/background tasks/i.test(all), all)
 })
 
 test('a task that was in the live background set and failed IS reported as failed', async () => {
   const { text } = await run([level('b1'), started('b1'), note('b1', 'failed', 'Dev server crashed'), level()])
-  assert.match(text, /后台任务失败.*Dev server crashed/)
+  assert.match(text, /background tasks failed.*Dev server crashed/i)
 })
 
 test('a task the user/CLI STOPPED is reported as stopped, not as failed', async () => {
   const { text, all } = await run([level('b1'), started('b1'), note('b1', 'stopped', 'Dev server'), level()])
-  assert.match(all, /已停止|stopped/i)
-  assert.ok(!/后台任务失败/.test(all), all)
-  assert.ok(!/后台任务失败/.test(text))
+  assert.match(all, /stopped/i)
+  assert.ok(!/background tasks failed/i.test(all), all)
+  assert.ok(!/background tasks failed/i.test(text))
 })
 
 test('a task the DRIVER stopped at the end of the turn is not reported as a failure', async () => {
@@ -55,8 +55,8 @@ test('a task the DRIVER stopped at the end of the turn is not reported as a fail
 
 test('a task still running at the deadline is reported as possibly terminated, not failed', () => {
   const n = renderBackgroundNotes([], [{ task_id: 'b1', description: 'Long job' }], true, 3000)
-  assert.match(n.alert, /超过 3s 上限/)
-  assert.ok(!/后台任务失败/.test(n.alert))
+  assert.match(n.alert, /exceeded the 3s hold/)
+  assert.ok(!/background tasks failed/i.test(n.alert))
 })
 
 test('mixed outcomes: completed ones are info, stopped/failed are separate, nothing is double counted', () => {
@@ -66,9 +66,9 @@ test('mixed outcomes: completed ones are info, stopped/failed are separate, noth
     { taskId: 'c', status: 'stopped', summary: 'Server' },
   ], [], false, 0)
   assert.match(n.info, /Build/)
-  assert.match(n.alert, /后台任务失败：Tests/)
-  assert.match(n.alert, /后台任务已停止：Server/)
-  assert.ok(!/后台任务失败：[^；\]]*Server/.test(n.alert), 'Server is listed as stopped, not failed')
+  assert.match(n.alert, /background tasks failed: Tests/i)
+  assert.match(n.alert, /background tasks stopped: Server/i)
+  assert.ok(!/background tasks failed:[^;\]]*Server/i.test(n.alert), 'Server is listed as stopped, not failed')
 })
 
 test('the same task notified twice (resume, replay) is reported once', async () => {
@@ -102,20 +102,20 @@ async function runAborted(events, settings = {}) {
 
 test('a user interrupt does not claim the background task is "still running": it was ended with the turn', async () => {
   const text = await runAborted([level('b1'), started('b1', { description: 'Dev server' })])
-  assert.ok(!/仍在运行/.test(text), text)
+  assert.ok(!/still running/i.test(text), text)
   assert.match(text, /Dev server/)
-  assert.match(text, /被中断.*终止的后台任务/)
+  assert.match(text, /interrupted.*background tasks ended with it/i)
 })
 
 test('renderBackgroundNotes says a task was ended with the turn when the run was interrupted', () => {
   const n = renderBackgroundNotes([], [{ task_id: 'b1', description: 'Dev server' }], false, 0, { interrupted: true })
-  assert.ok(!/仍在运行/.test(n.alert))
+  assert.ok(!/still running/i.test(n.alert))
   assert.match(n.alert, /Dev server/)
 })
 
 test('with no interrupt and no deadline, an unfinished task is still reported as running (unchanged)', () => {
   const n = renderBackgroundNotes([], [{ task_id: 'b1', description: 'Dev server' }], false, 0)
-  assert.match(n.alert, /仍在运行/)
+  assert.match(n.alert, /still running/i)
 })
 
 // ---- the failure was already reported by the tool call itself ----
@@ -131,7 +131,7 @@ test('a task whose own tool call already returned an error is not reported a sec
     toolResult('t-x1', 'Exit code 143\nTerminated', true),
     note('x1', 'failed', 'Write failing tests first', { tool_use_id: 't-x1' }), level(),
   ])
-  assert.ok(!/后台任务失败/.test(all), all)
+  assert.ok(!/background tasks failed/i.test(all), all)
 })
 
 test('a real background launch (tool call returned OK) that later fails is still reported', async () => {
@@ -141,7 +141,7 @@ test('a real background launch (tool call returned OK) that later fails is still
     toolResult('t-b1', 'Command running in background', false),
     note('b1', 'failed', 'Dev server crashed', { tool_use_id: 't-b1' }), level(),
   ])
-  assert.match(text, /后台任务失败.*Dev server crashed/)
+  assert.match(text, /background tasks failed.*Dev server crashed/i)
 })
 
 test('a subagent\'s inner task is not listed or reported as its own background task', async () => {
