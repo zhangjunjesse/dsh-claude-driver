@@ -1,5 +1,5 @@
 // Pure unit tests (no network, no SDK spawn) for showToolProgress: the
-// lightweight "[Claude Code] 正在调用工具 …" text-deltas emitted when whole
+// lightweight "[Claude Code] calling tool …" text-deltas emitted when whole
 // assistant messages carry tool_use blocks. Uses the settings.queryImpl test
 // seam to feed a scripted SDK message stream. Run: node test-tool-progress.mjs
 import assert from 'node:assert/strict'
@@ -33,7 +33,7 @@ const result = (text, usage = { input_tokens: 10, output_tokens: 5 }) =>
   ({ type: 'result', subtype: 'success', session_id: 's1', result: text, usage })
 
 // --- renderToolProgress shape ---
-assert.equal(renderToolProgress('read_file'), '\n[Claude Code] 正在调用工具 read_file…\n')
+assert.equal(renderToolProgress('read_file'), '\n[Claude Code] calling tool read_file…\n')
 assert.ok(renderToolProgress('').includes('(unknown)'), 'missing tool name still renders')
 assert.equal(renderToolProgress('mcp__dsh-tools__add'), renderToolProgress('add'), 'mcp server prefix stripped')
 
@@ -81,7 +81,7 @@ assert.equal(renderToolProgress('mcp__dsh-tools__add'), renderToolProgress('add'
     ]),
     result('答案是 42。'),
   ])
-  assert.ok(chunks.every((c) => c.type !== 'text-delta' || !c.text.includes('正在调用工具')), 'no progress when disabled')
+  assert.ok(chunks.every((c) => c.type !== 'text-delta' || !c.text.includes('calling tool')), 'no progress when disabled')
   assert.deepEqual(chunks.at(-1).reason, { kind: 'stop' })
 }
 
@@ -94,7 +94,7 @@ assert.equal(renderToolProgress('mcp__dsh-tools__add'), renderToolProgress('add'
     assistant([{ type: 'text', text: '好的。' }]),
     result('好的。'),
   ])
-  assert.ok(chunks.every((c) => c.type !== 'text-delta' || !c.text.includes('正在调用工具')), 'subagent tool_use stays silent')
+  assert.ok(chunks.every((c) => c.type !== 'text-delta' || !c.text.includes('calling tool')), 'subagent tool_use stays silent')
 }
 
 // --- subagent assistant text/thinking never enters the main reply ---

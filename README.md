@@ -270,7 +270,7 @@ CLI 把对话框 park 给一个永远不会显示它的宿主，到期返回「�
 摘要可用时，思考块是正常的可读文本；摘要不可用（或 `thinkingDisplay: null`）时退化成：
 
 ```
-🤔 思考中（本轮思考内容已加密，仅可见进度） · · 约 550 tokens
+🤔 Thinking (this turn's reasoning is encrypted; only progress is visible) · · ~ 550 tokens
 ```
 
 真实摘要一旦出现，心跳自动让位（保留为块内历史，不再追加点）。

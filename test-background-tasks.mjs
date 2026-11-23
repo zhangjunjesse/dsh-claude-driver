@@ -71,7 +71,7 @@ const reasoningOf = (chunks) => chunks.filter((c) => c.type === 'reasoning-delta
 // --- renderBackgroundNote shape ------------------------------------------------
 assert.equal(renderBackgroundNote([], [], false, 1000), '', 'nothing to report → no note')
 assert.ok(
-  renderBackgroundNote([{ status: 'completed', summary: 'build' }], [], false, 1000).includes('build（completed）'),
+  renderBackgroundNote([{ status: 'completed', summary: 'build' }], [], false, 1000).includes('build(completed)'),
   'settled task named with its status',
 )
 assert.ok(
@@ -79,20 +79,20 @@ assert.ok(
   'timeout note carries the cap in seconds',
 )
 assert.ok(
-  renderBackgroundNote([], [{ task_id: 'x', description: 'long job' }], false, 60000).includes('仍在运行'),
+  renderBackgroundNote([], [{ task_id: 'x', description: 'long job' }], false, 60000).includes('still running'),
   'still-running note when the stream ended early',
 )
 
 // --- renderBackgroundNotes: severity split for the main session ----------------
 {
   const notes = renderBackgroundNotes([{ status: 'completed', summary: 'build' }], [], false, 1000)
-  assert.ok(notes.info.includes('build（completed）'), 'completed settlement goes to info')
+  assert.ok(notes.info.includes('build(completed)'), 'completed settlement goes to info')
   assert.equal(notes.alert, '', 'all-completed → no alert')
 }
 {
   const notes = renderBackgroundNotes([{ status: 'failed', summary: 'deploy' }], [], false, 1000)
   assert.equal(notes.info, '', 'no completed entries → no info')
-  assert.ok(notes.alert.includes('后台任务失败：deploy（failed）'), 'failure goes to alert, named as such')
+  assert.ok(notes.alert.includes('Background tasks failed: deploy (failed)'), 'failure goes to alert, named as such')
 }
 {
   const notes = renderBackgroundNotes(
@@ -101,9 +101,9 @@ assert.ok(
     true,
     60000,
   )
-  assert.ok(notes.info.includes('build（completed）'), 'mixed: completed stays info')
+  assert.ok(notes.info.includes('build(completed)'), 'mixed: completed stays info')
   assert.ok(!notes.info.includes('deploy'), 'mixed: failure never leaks into info')
-  assert.ok(notes.alert.includes('deploy（failed）'), 'mixed: failure in alert')
+  assert.ok(notes.alert.includes('deploy(failed)'), 'mixed: failure in alert')
   assert.ok(notes.alert.includes('60s') && notes.alert.includes('long job'), 'mixed: timeout part joins the alert')
   assert.ok(!notes.alert.includes('build'), 'mixed: completed never leaks into alert')
 }
@@ -133,11 +133,11 @@ assert.equal(briefTaskSummary(undefined), '', 'undefined → empty')
 assert.equal(briefTaskSummary(null), '', 'null → empty')
 assert.equal(briefTaskSummary('\n\n  真正的内容\n后面还有'), '真正的内容…', 'blank leading lines skipped')
 assert.ok(
-  renderBackgroundNote([{ status: 'completed', taskId: 'task-7', summary: '' }], [], false, 1000).includes('task-7（completed）'),
+  renderBackgroundNote([{ status: 'completed', taskId: 'task-7', summary: '' }], [], false, 1000).includes('task-7(completed)'),
   'empty summary falls back to the taskId',
 )
 assert.ok(
-  renderBackgroundNote([{ status: 'completed', taskId: 'task-7' }], [], false, 1000).includes('task-7（completed）'),
+  renderBackgroundNote([{ status: 'completed', taskId: 'task-7' }], [], false, 1000).includes('task-7(completed)'),
   'missing summary falls back to the taskId',
 )
 
@@ -150,7 +150,7 @@ assert.ok(
   assert.ok(note.length < 200, `note stays short, got ${note.length}`)
   assert.ok(note.includes('已完成对仓库的审计，发现 3 处问题。'), 'first line survives')
   assert.ok(!note.includes('结论：建议立即修复。'), 'trailing report body dropped')
-  assert.ok(note.includes('（completed）'), 'status still rendered')
+  assert.ok(note.includes('(completed)'), 'status still rendered')
 }
 
 // --- buildSdkPrompt: open-input only when asked --------------------------------
@@ -182,9 +182,9 @@ assert.ok(
   )
   const body = textOf(chunks)
   assert.ok(body.includes('ok'), 'model text preserved')
-  assert.ok(!body.includes('build（completed）'), 'all-completed settlement no longer glued into the prose')
+  assert.ok(!body.includes('build(completed)'), 'all-completed settlement no longer glued into the prose')
   const thought = reasoningOf(chunks)
-  assert.ok(thought.includes('build（completed）'), 'settled background task reported in the reasoning block instead')
+  assert.ok(thought.includes('build(completed)'), 'settled background task reported in the reasoning block instead')
   assert.deepEqual(chunks.at(-1).reason, { kind: 'stop' }, 'successful finish')
   const blockEnd = chunks.find((c) => c.type === 'block-end' && c.index === 0)
   assert.equal(blockEnd.block.text, body, 'block-end text equals the concatenated deltas')
@@ -208,7 +208,7 @@ assert.ok(
     ],
   )
   const body = textOf(chunks)
-  assert.ok(body.includes('build（completed）'), "channel 'text' opts back into the prose placement")
+  assert.ok(body.includes('build(completed)'), "channel 'text' opts back into the prose placement")
   assert.equal(reasoningOf(chunks), '', 'and nothing goes to reasoning')
   const blockEnd = chunks.find((c) => c.type === 'block-end' && c.index === 0)
   assert.equal(blockEnd.block.text, body, 'block-end text equals the concatenated deltas')
@@ -224,7 +224,7 @@ assert.ok(
     notif('failed', 'deploy'),
   ])
   const body = textOf(chunks)
-  assert.ok(body.includes('后台任务失败：deploy（failed）'), 'failure surfaces in the prose, not buried in reasoning')
+  assert.ok(body.includes('Background tasks failed: deploy (failed)'), 'failure surfaces in the prose, not buried in reasoning')
   assert.ok(!reasoningOf(chunks).includes('deploy'), 'failure not duplicated into reasoning')
   assert.deepEqual(chunks.at(-1).reason, { kind: 'stop' }, 'a failed background task is not a turn failure')
 }
@@ -269,7 +269,7 @@ assert.ok(
     result('ok'),
   ])
   const body = textOf(chunks)
-  assert.ok(body.includes('仍在运行'), 'still-running task named')
+  assert.ok(body.includes('still running'), 'still-running task named')
   assert.ok(body.includes('long job'))
   assert.deepEqual(chunks.at(-1).reason, { kind: 'stop' }, 'still a successful turn')
 }
@@ -285,7 +285,7 @@ assert.ok(
     notif('completed', 'never observed'),
   ])
   const body = textOf(chunks)
-  assert.ok(body.includes('上限'), 'timeout narrated')
+  assert.ok(body.includes('hold'), 'timeout narrated')
   assert.ok(!body.includes('never observed'), 'stopped draining at the deadline')
   assert.deepEqual(chunks.at(-1).reason, { kind: 'stop' }, 'timeout is not a turn failure')
 }

@@ -177,7 +177,7 @@ test('a foreground command is not reported as a background task', async () => {
     { type: 'system', subtype: 'task_notification', session_id: 's1', task_id: 'k1', tool_use_id: 't1', status: 'completed', summary: 'A slow command' },
   ]
   const { reasoning, chunks } = await run([toolUse('t1', 'Bash', { command: 'sleep 2' }), ...taskEvents, toolResult('t1', 'x')])
-  assert.ok(!/后台任务|background task/i.test(reasoning), reasoning)
+  assert.ok(!/background task/i.test(reasoning), reasoning)
   assert.equal(chunks.at(-1).reason.kind, 'stop')
 })
 
@@ -187,5 +187,5 @@ test('a real background task is still reported', async () => {
     { type: 'system', subtype: 'task_notification', session_id: 's1', task_id: 'k1', tool_use_id: 't1', status: 'completed', summary: 'Dev server' },
   ]
   const { reasoning } = await run([toolUse('t1', 'Bash', { command: 'serve', run_in_background: true }), ...taskEvents, toolResult('t1', 'started')])
-  assert.match(reasoning, /后台任务|background task/i)
+  assert.match(reasoning, /background task/i)
 })

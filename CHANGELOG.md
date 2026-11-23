@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+### Changed
+- Every user-visible driver string is English now: background-task notes, tool-progress
+  and built-in failure lines, the thinking heartbeat, the max-turns note, and the
+  subagent recovery report/narration (previously mixed Chinese/English).
+
 ### Added
 - `bridgeTools: 'plugins'` bridges only tools outside `DSH_CORE_TOOLS`, so Claude Code's built-ins are the single core toolset and their DSH twins stop consuming MCP schema tokens; `builtinToolCards` still mirrors built-in calls to DSH cards. `coreTools` and `bridgeToolNames` tune the set.
 - `systemPromptMode: 'full' | 'user' | 'none'` plus `userPromptFiles`: `'user'` appends only operator instruction files (`~/.dsh/AGENTS.md` + workspace `AGENTS.md`, 64 KiB cap) instead of the full DSH prompt and system messages. Prewarm keys include the mode and file contents.

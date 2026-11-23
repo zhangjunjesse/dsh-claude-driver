@@ -148,7 +148,7 @@ function transcript(agentId, { prompt, texts }) {
   const { recovered, note } = harvestOrphanedRuns(opts)
   assert.equal(recovered.length, 1, 'the orphaned run is picked up')
   assert.equal(recovered[0].agents.length, 2, 'both dead subagents are recovered')
-  assert.match(note, /2 个 Claude Code 子代理/, 'the note names how many were salvaged')
+  assert.match(note, /2 Claude Code subagents/, 'the note names how many were salvaged')
   assert.match(note, /Writing the full report now\./, 'the note quotes what the subagent last produced')
 
   const report = fs.files.get(recovered[0].report)
@@ -251,7 +251,7 @@ const textOf = (chunks) =>
     { type: 'result', subtype: 'success', session_id: 's-new', result: 'fresh answer', usage: {} },
   ])
   const text = textOf(chunks)
-  assert.match(text, /子代理随进程一起中断/, 'the salvage is narrated')
+  assert.match(text, /interrupted with the process/, 'the salvage is narrated')
   assert.match(text, /Writing the full report now\./, 'and it carries what the dead subagent produced')
   assert.ok(text.indexOf('Writing the full report') < text.indexOf('fresh answer'), 'salvage lands before the new reply')
   assert.equal(readRunsAtRisk(opts).length, 0, 'the marker is consumed by the delivering turn')
