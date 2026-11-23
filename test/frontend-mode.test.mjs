@@ -21,7 +21,8 @@ test("bridgeTools:'plugins' keeps plugin tools and drops DSH core twins", () => 
 
 test("bridgeTools:'plugins' honours coreTools and bridgeToolNames overrides", () => {
   const schemas = [schema('bash'), schema('notion_search')]
-  assert.deepEqual(selectBridgeSchemas(schemas, { bridgeTools: 'plugins', coreTools: ['notion_search'] }).map((s) => s.name), [])
+  // coreTools replaces the shipped set: bash stops being core, notion_search starts.
+  assert.deepEqual(selectBridgeSchemas(schemas, { bridgeTools: 'plugins', coreTools: ['notion_search'] }).map((s) => s.name), ['bash'])
   assert.deepEqual(selectBridgeSchemas(schemas, { bridgeTools: 'plugins', coreTools: ['bash'], bridgeToolNames: ['bash'] }).map((s) => s.name), ['bash', 'notion_search'])
 })
 
