@@ -49,6 +49,38 @@ You (DSH UI)  ->  DSH session  ->  llm/stream route "claude-code"
 
 For the full feature list, tuning options and design notes, see the sections below (currently written in Chinese).
 
+## Optimizations
+
+A claude-code turn pays for three layers: Claude Code's own preset, the DSH system prompt appended to it, and the tool schemas bridged over MCP — plus, on a subscription, a quota weighting that can dwarf both.
+
+### Bridge plugin tools only
+
+`bridgeTools: 'plugins'` bridges every tool outside `DSH_CORE_TOOLS`; `coreTools` replaces that list and `bridgeToolNames` forces individual names through (the DSH ask card stays bridged by default). Claude Code's built-ins remain the only core toolset, and `builtinToolCards` mirrors each built-in call and result 1:1 onto the matching DSH card (`bash`, `read`, `edit`, …), so the GUI and approval flow are unchanged.
+
+Measured on a 65-tool web session: the bridged schemas are 63 KB ≈ 15.7k tokens per turn, of which ≈ 6.6k are the DSH twins of built-ins (`bash`, `read`, `edit`, `glob`, `grep`, `web_*`, `job_*`, `schedule_*`, …). Plugin tools (cu ≈ 4.4k, blender ≈ 2.7k, notion ≈ 0.9k) still cross the bridge. Core tools that stay unbridged — `skill`, `present`, `schedule_*`, `subagent`, `job_*`, the goal tools — must be named in `bridgeToolNames` if Claude should see them.
+
+Built-ins execute inside Claude Code: `approveBuiltinTools` can route them through DSH approval, but DSH's filesystem sandbox applies only to bridged calls.
+
+### Trim the system prompt
+
+`systemPromptMode: 'user'` appends only operator instruction files — `~/.dsh/AGENTS.md` plus `AGENTS.md` from the workspace and its parents (64 KiB cap; `userPromptFiles` overrides the list). `'none'` appends nothing, leaving Claude Code's preset alone. Both drop DSH's assembled prompt and every system-role message; prewarm fingerprints include the mode and file contents, so a process started under one mode is never adopted by another.
+
+Measured (Claude Haiku 5.5, effort low, prompt caching disabled, 23-tool headless profile): full **48,631** → `'user'` + plugin-only bridge **45,637** → `'none'` + no bridge **39,945** prompt tokens. A production web profile carries more core schemas and a larger DSH prompt, so the real saving is larger; Claude Code's own preset (~35k tokens) dominates what remains.
+
+### Subscription quota: the entrypoint weighting
+
+Independently reproduced in several A/Bs: Agent SDK entrypoints (`sdk-ts`, `sdk-cli`, `sdk-py`) burn the 5-hour window about **1.6×–3× faster per token** than interactive labels (`cli`, `claude-desktop`, `claude-vscode`); the weekly window appears unaffected. The weight follows `cc_entrypoint` in the `x-anthropic-billing-header` and the User-Agent. Anthropic has not documented it — see [anthropics/claude-code#97074](https://github.com/anthropics/claude-code/issues/97074) and the open permission question [#107106](https://github.com/anthropics/claude-code/issues/107106).
+
+This driver deliberately keeps `CLAUDE_CODE_ENTRYPOINT=t3-code` — the [t3code workaround](https://github.com/pingdotgg/t3code/pull/28410) — because it is the proven label for quota metering; it is not configurable on purpose. Caveats worth knowing: `t3-code` is not on Claude Code's known-entrypoint list, so in **auto** permission mode the CLI bills a local per-tool-call classifier ([t3code#34562](https://github.com/pingdotgg/t3code/issues/34562)) — this driver's permission mapping never uses auto, so it does not fire here. Do not set `cli` or `claude-vscode`. The workaround is undocumented and may change.
+
+### Prompt caching
+
+Claude caches the prompt prefix for 5 minutes by default; a gap longer than that rewrites the cache. `ENABLE_PROMPT_CACHING_1H=1` raises the TTL to an hour (higher write price, cheaper for gappy delegation). For clean token comparisons set `DISABLE_PROMPT_CACHING=1` and read the per-turn `plugin:dsh-claude-driver/usage` records instead of the live meter.
+
+### Effort, model and latency
+
+`effort` defaults to `medium`; `low` plus `haiku` for light turns cuts thinking tokens far more than prompt trimming, and `maxTurns` bounds the internal loop. `prewarm: true` and `resumeChain` do not save tokens — they remove the ~4s cold CLI boot from follow-up turns.
+
 ## Troubleshooting: "thinking forever"
 
 A turn always ends now. If Claude Code cannot reach the Anthropic API (a configured `proxy` that is not running, no network, a firewall) the turn fails within seconds with `cannot reach the Anthropic API ... check that the proxy is running`. Earlier versions shipped a default `proxy` of `http://127.0.0.1:7897`; with nothing listening there the CLI retried silently for minutes and the UI spun forever. There is no default proxy any more: set `proxy` only if you need one.
@@ -433,23 +465,6 @@ cd ~/.dsh/profiles/node_modules/dsh-claude-driver && npm i --no-save
 
 - **界面**：会话模型选择器 → "Claude Code" 分组 → 选模型（默认 fable，重活用 opus）
 - **或 settings.yaml**：`agent-default-model` 改为 `provider: claude-code` / `model: fable`
-
-## 省 token 的前端模式（可选）
-
-Claude Code 的每一轮都要重发系统提示与全部工具 schema。实测本机一个装满插件的 DSH 会话（65 个工具）工具 schema 共 63 KB ≈ **15.7k tokens**，其中 DSH 核心工具约 **6.6k**、插件工具（cu/blender/notion…）约 **9.2k**；DSH 系统提示另计。两处开关可以把它压下来：
-
-```yaml
-- id: claude-driver
-  config:
-    bridgeTools: 'plugins'      # 只桥接插件工具，核心工具交给 Claude 内置 + DSH 卡片镜像
-    systemPromptMode: 'user'    # 只带 ~/.dsh/AGENTS.md 与工作区 AGENTS.md；或 'none' 全不带
-    # bridgeToolNames: ['ask_user_question']   # 默认值；需要 DSH 提问卡片时保留
-```
-
-- **核心工具不再重复下发**：Claude 的 `Bash`/`Read`/`Edit`/`Grep`/`Glob`/`WebFetch`/`WebSearch` 是唯一的核心工具集，调用仍由 `builtinToolCards` 1:1 镜像成 DSH 原生卡片（`bash`/`read`/`edit`…），所以界面与审批不变；它们的执行发生在 Claude Code 内，**不经过 DSH 的文件系统沙箱**（需要审批时开 `approveBuiltinTools`）。
-- **插件工具照旧桥接**：cu/blender/notion 等 `DSH_CORE_TOOLS` 之外的工具仍走 MCP 桥 + DSH 沙箱/审批。
-- **会失去的**：`skill`、`present`、`schedule_*`、`subagent`、`job_*`、目标工具等核心工具不再出现在 Claude 的工具列表里（需要谁就把名字加进 `bridgeToolNames`）；`systemPromptMode:'user'` 也不再带 DSH 的内置行为提示和插件提示段。
-- 想把 `coreTools` 列表调准：见 `lib/index.js` 的 `DSH_CORE_TOOLS`，或用配置覆盖。
 
 ## 配置项
 

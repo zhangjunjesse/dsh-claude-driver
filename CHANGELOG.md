@@ -2,6 +2,13 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/)。变动记录于此。
 
+## Unreleased
+
+### Added
+- `bridgeTools: 'plugins'` bridges only tools outside `DSH_CORE_TOOLS`, so Claude Code's built-ins are the single core toolset and their DSH twins stop consuming MCP schema tokens; `builtinToolCards` still mirrors built-in calls to DSH cards. `coreTools` and `bridgeToolNames` tune the set.
+- `systemPromptMode: 'full' | 'user' | 'none'` plus `userPromptFiles`: `'user'` appends only operator instruction files (`~/.dsh/AGENTS.md` + workspace `AGENTS.md`, 64 KiB cap) instead of the full DSH prompt and system messages. Prewarm keys include the mode and file contents.
+- README: an **Optimizations** section covering plugin-only tool bridging, operator-only prompts (with measured token counts), the `t3-code` entrypoint quota workaround, prompt caching, and effort/latency levers.
+
 ## [0.17.0] - 2026-11-05
 
 ### Fixed
