@@ -108,6 +108,10 @@ window.__ModuleLoader__.load({
 		}
 
 		const USAGE_ROUTE = "/claude-usage.json";
+		// The usage stop is configured on the Plugins page (claude-driver row), not
+		// in the dock, so it can carry labels and hints without crowding the card.
+		const STOP_ROUTE = "/claude-usage-stop.json";
+		const STOP_PAGE_KEY = "dsh-claude-driver#claude-driver";
 		const USAGE_POLL_MS = 15000;
 		const PANEL_MARGIN = 12;
 		const PANEL_GAP = 8;
@@ -136,6 +140,28 @@ window.__ModuleLoader__.load({
 			// first turn runs for hours) still owns the meter.
 			const onRoute = typeof provider === "string" && provider !== "" && route === provider;
 			return { label: "Claude", cost, windows, visible: windows.length > 0 && (Boolean(stats) || onRoute) };
+		}
+
+		/** The page draft: a checkbox pair plus the threshold as a text field. */
+		function stopDraftFrom(settings) {
+			const percent = settings?.usageStopPercent;
+			return {
+				enabled: percent !== false,
+				percent: typeof percent === "number" ? String(percent) : "95",
+				compaction: settings?.usageStopCompaction !== false,
+				endSession: settings?.usageStopEndSession !== false,
+			};
+		}
+
+		/** Turn the draft into the patch the host route validates, or say why not. */
+		function stopPatchFrom(draft) {
+			const flags = { usageStopCompaction: draft?.compaction !== false, usageStopEndSession: draft?.endSession !== false };
+			if (draft?.enabled === false) return { ok: true, value: { ...flags, usageStopPercent: false } };
+			const percent = Number(String(draft?.percent ?? "").trim());
+			if (!Number.isFinite(percent) || percent <= 0 || percent > 100) {
+				return { ok: false, error: "Enter a percentage from 1 to 100, or turn the stop off." };
+			}
+			return { ok: true, value: { ...flags, usageStopPercent: percent } };
 		}
 
 		const usageResetIn = (iso) => {
@@ -320,14 +346,182 @@ window.__ModuleLoader__.load({
 			return ClaudeBar;
 		}
 
+		function mountStopPage(require) {
+			const React = require("react");
+			const h = React.createElement;
+			const noteStyle = { margin: 0, fontSize: 12, lineHeight: "18px", color: "var(--dsw-alias-label-tertiary)" };
+			const errorStyle = { ...noteStyle, color: "var(--dsw-alias-state-error-primary)" };
+			const rowStyle = { display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--dsw-alias-label-secondary)" };
+			const inputStyle = {
+				boxSizing: "border-box",
+				height: 32,
+				width: 96,
+				padding: "0 10px",
+				font: "inherit",
+				fontSize: 13,
+				color: "var(--dsw-alias-label-primary)",
+				background: "var(--dsw-alias-bg-layer-3)",
+				border: ".5px solid var(--dsw-alias-border-l4)",
+				borderRadius: "var(--dsw-radius-md)",
+			};
+			const buttonStyle = {
+				alignSelf: "flex-start",
+				height: 32,
+				padding: "0 14px",
+				font: "inherit",
+				fontSize: 13,
+				color: "var(--dsw-alias-label-primary)",
+				background: "var(--dsw-alias-interactive-bg-hover)",
+				border: ".5px solid var(--dsw-alias-border-l4)",
+				borderRadius: "var(--dsw-radius-md)",
+				cursor: "pointer",
+			};
+
+			/** The claude-driver row's Configure page: the 5-hour usage stop. */
+			function StopSettingsPage({ view }) {
+				const [state, setState] = React.useState({ status: "loading" });
+				const [draft, setDraft] = React.useState(null);
+				const [saving, setSaving] = React.useState(false);
+				const [message, setMessage] = React.useState("");
+				const [attempt, setAttempt] = React.useState(0);
+				React.useEffect(() => {
+					let alive = true;
+					setState({ status: "loading" });
+					fetch(STOP_ROUTE, { cache: "no-store", headers: { accept: "application/json" } })
+						.then((response) => (response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`))))
+						.then((payload) => {
+							if (!alive) return;
+							setState({ status: "ready", settings: payload?.settings ?? {}, capabilities: payload?.capabilities ?? {} });
+							setDraft(stopDraftFrom(payload?.settings));
+						})
+						.catch((error) => {
+							if (alive) setState({ status: "error", error: String(error?.message ?? error) });
+						});
+					return () => {
+						alive = false;
+					};
+				}, [attempt]);
+				if (view === "summary") return "Stop Claude turns at the 5-hour window limit, compact the live Claude session natively, and end it.";
+				if (state.status === "loading") return h("p", { style: noteStyle }, "Loading the usage-stop settings…");
+				if (state.status === "error") {
+					return h(
+						"div",
+						{ style: { display: "flex", flexDirection: "column", gap: 8 } },
+						h("p", { style: errorStyle, role: "alert" }, `Could not load the usage-stop settings: ${state.error}`),
+						h("button", { type: "button", style: buttonStyle, onClick: () => setAttempt((value) => value + 1) }, "Retry"),
+					);
+				}
+				const capabilities = state.capabilities ?? {};
+				const rows = draft ?? stopDraftFrom(state.settings);
+				const edit = (patch) => {
+					setMessage("");
+					setDraft({ ...rows, ...patch });
+				};
+				const save = async () => {
+					const built = stopPatchFrom(rows);
+					if (!built.ok) {
+						setMessage(built.error);
+						return;
+					}
+					setSaving(true);
+					try {
+						const response = await fetch(STOP_ROUTE, {
+							method: "POST",
+							headers: { "content-type": "application/json", accept: "application/json" },
+							body: JSON.stringify(built.value),
+						});
+						const payload = await response.json().catch(() => null);
+						if (!response.ok) {
+							setMessage(payload?.error ?? `The host refused the save (HTTP ${response.status}).`);
+							return;
+						}
+						const settings = payload?.settings ?? built.value;
+						setState({ status: "ready", settings, capabilities: payload?.capabilities ?? capabilities });
+						setDraft(stopDraftFrom(settings));
+						setMessage("Saved.");
+					} catch (error) {
+						setMessage(`The save did not reach the host: ${String(error?.message ?? error)}`);
+					} finally {
+						setSaving(false);
+					}
+				};
+				return h(
+					"div",
+					{ style: { display: "flex", flexDirection: "column", gap: 12 } },
+					h(
+						"p",
+						{ style: noteStyle },
+						"When the account-wide 5-hour plan window reaches the threshold, the running turn ends at its next safe tool boundary, the active goal pauses, and new Claude turns are refused until the window resets.",
+					),
+					h(
+						"label",
+						{ style: rowStyle },
+						h("input", { type: "checkbox", checked: rows.enabled, onChange: (event) => edit({ enabled: event.target.checked }) }),
+						"Stop Claude turns at the 5-hour window limit",
+					),
+					h(
+						"span",
+						{ style: rowStyle },
+						"Threshold",
+						h("input", {
+							type: "number",
+							min: 1,
+							max: 100,
+							step: 1,
+							value: rows.percent,
+							"aria-label": "Stop threshold, percent of the 5-hour window",
+							disabled: !rows.enabled,
+							style: inputStyle,
+							onChange: (event) => edit({ percent: event.target.value }),
+						}),
+						h("span", { style: noteStyle }, "% of the window"),
+					),
+					h(
+						"label",
+						{ style: rowStyle },
+						h("input", { type: "checkbox", checked: rows.compaction, onChange: (event) => edit({ compaction: event.target.checked }) }),
+						"Compact the live Claude session (Claude's own /compact)",
+					),
+					h(
+						"label",
+						{ style: rowStyle },
+						h("input", { type: "checkbox", checked: rows.endSession, onChange: (event) => edit({ endSession: event.target.checked }) }),
+						"End the Claude session after compacting (the next turn starts fresh)",
+					),
+					capabilities.nativeCompaction === false
+						? h("p", { style: noteStyle }, "Claude native compaction is disabled in this deployment (nativeCompaction: false), so the stop cannot compact the live Claude session.")
+						: null,
+					capabilities.resumeChain === false
+						? h("p", { style: noteStyle }, "The resume chain is disabled (resumeChain: false), so there is no Claude session to end.")
+						: null,
+					message ? h("p", { style: message === "Saved." ? noteStyle : errorStyle, role: "status" }, message) : null,
+					h(
+						"div",
+						null,
+						h("button", { type: "button", style: buttonStyle, disabled: saving || draft === null, onClick: save }, saving ? "Saving…" : "Save usage stop"),
+					),
+				);
+			}
+			return StopSettingsPage;
+		}
+
 		module.exports.name = "claude-driver-client";
 		module.exports.inject = ["slots"];
 		module.exports.barSegments = barSegments;
+		module.exports.STOP_PAGE_KEY = STOP_PAGE_KEY;
+		module.exports.stopDraftFrom = stopDraftFrom;
+		module.exports.stopPatchFrom = stopPatchFrom;
 		module.exports.apply = (ctx) => {
 			const ClaudeBar = mountBar(require);
 			// Order 10 sorts after the OpenCode Go meter (2); both are inline pills in the same dock row.
 			ctx.slots.inject("conversation.composer.dock", () =>
 				ctx.slots.register({ name: "conversation.composer.dock", id: "claude-driver-bar", order: 10 }, ClaudeBar),
+			);
+			// The 5-hour usage stop is configured from the Plugins page, on this
+			// bundle's claude-driver row, next to the package's other settings.
+			const StopSettingsPage = mountStopPage(require);
+			ctx.slots.inject("plugins.row.config", () =>
+				ctx.slots.register({ name: "plugins.row.config", key: STOP_PAGE_KEY }, StopSettingsPage),
 			);
 		};
 		return module.exports;

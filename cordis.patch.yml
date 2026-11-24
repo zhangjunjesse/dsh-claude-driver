@@ -17,6 +17,8 @@
       #   model: sonnet               # Claude model alias or full id
       #   maxTurns: 100
       #   usageStopPercent: 95         # stop all Claude turns at 95% of the 5-hour window
+      #   usageStopCompaction: true    # compact the live Claude session once at that stop
+      #   usageStopEndSession: true    # then end it: the next turn starts a fresh Claude session
       #   nice: 19                    # lowest CPU priority for every Claude CLI process
       #   permissionMode: acceptEdits
       #   proxy: http://127.0.0.1:7897
