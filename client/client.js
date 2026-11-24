@@ -480,7 +480,7 @@ window.__ModuleLoader__.load({
 					h(
 						"p",
 						{ style: noteStyle },
-						"When the account-wide 5-hour or weekly plan window reaches its threshold, the running turn ends at its next safe tool boundary, the active goal pauses, and new Claude turns are refused until that window resets. The context threshold compacts the live session natively at the next turn end without stopping anything.",
+						"When the account-wide 5-hour or weekly plan window reaches its threshold, the running turn ends at its next safe tool boundary, the active goal pauses, and new Claude turns are refused until that window resets. The context threshold compacts the live session natively at the next turn end without stopping anything. Both compactions run at the agent's next idle moment through the /compact command, so the transcript shows the compaction cue.",
 					),
 					h(
 						"span",

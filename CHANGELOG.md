@@ -5,6 +5,7 @@
 ## Unreleased
 
 ### Fixed
+- The plan-window stop compaction and the `compactAtTokens` autocompaction could quietly do nothing: both called `compaction.compactNow` from the `turn/end` listener, where DSH still reports the agent as `running`, and `compactNow` refuses a running agent. Even when it did run there was no cue in the transcript. Both now run at the agent's next idle transition **through the `/compact` command**, so the session ends up with the visible `/compact` card plus the compaction marker carrying Claude's summary, and the stop's end-session waits for a compaction that actually landed.
 - Sessions whose FIRST turn is a goal round (hours long, one DSH step) showed neither the Claude dock meter nor the context ring: the bar waited for a finished turn's stats, and the token meter only saw usage when the turn settled. The bar now appears as soon as the session route is `claude-code`, and each built-in tool card settlement carries the request's usage so context pressure moves during the turn.
 
 ### Changed

@@ -130,7 +130,7 @@ The Claude plan windows are account-wide, so one long goal turn can consume the 
 
 1. finishes the tool call in flight and keeps its result, then ends the turn at that boundary with a visible notice (never mid-write, never as an error);
 2. pauses the session's active goal, so no further round starts against the stopped guard;
-3. compacts the live Claude session once with Claude's own `/compact`, so resuming later does not replay the full history;
+3. compacts the live Claude session once with Claude's own `/compact` at the agent's next idle transition, so resuming later does not replay the full history and the transcript shows it: a `/compact` command card plus the compaction marker carrying Claude's summary;
 4. ends that Claude session after the compaction (`usageStopEndSession`, default `true`): the resume chain and any prewarmed process are dropped, so after the window resets the next turn starts a fresh Claude session over DSH's compacted history instead of resuming the one that burned the window;
 5. refuses every new `claude-code` turn in the host (main model and subagents) until the window resets.
 
@@ -138,7 +138,7 @@ When the window resets the stop lifts by itself; a goal paused by the stop stays
 
 ## Native context autocompaction
 
-`compactAtTokens` (default `0`, off) compacts the live Claude session with Claude's own `/compact` when a finished turn reports a context of at least that many tokens (the final request's input + cache read + cache write, the same number the token meter shows). The compaction runs at the following turn end, keeps the same Claude session, and fires once per crossing: the watch re-arms only after a turn reports a context below the threshold, so a summary plus a large tail cannot loop. Without the native path (`nativeCompaction: false` or `resumeChain: false`) the option warns once per crossing and spends nothing, leaving automatic compaction to DSH.
+`compactAtTokens` (default `0`, off) compacts the live Claude session with Claude's own `/compact` when a finished turn reports a context of at least that many tokens (the final request's input + cache read + cache write, the same number the token meter shows). The compaction runs at the following turn end, at the agent's first idle transition (the compaction service refuses a running agent), and goes through the `/compact` command so the transcript shows the cue. It keeps the same Claude session, and fires once per crossing: the watch re-arms only after a turn reports a context below the threshold, so a summary plus a large tail cannot loop. Without the native path (`nativeCompaction: false` or `resumeChain: false`) the option warns once per crossing and spends nothing, leaving automatic compaction to DSH.
 
 All of these knobs — both plan-window thresholds, native compaction, ending the session afterwards, and `compactAtTokens` — are editable from **Plugins → Claude Code driver → claude-driver → Configure**, without editing YAML or restarting DSH. The page saves to `$DSH_HOME/storages/claude-driver/usage-stop.json`, which wins over the YAML values; it also shows when the native compaction path is unavailable in the deployment.
 
@@ -497,9 +497,9 @@ cd ~/.dsh/profiles/node_modules/dsh-claude-driver && npm i --no-save
 | `nativeCompaction` | `true` | DSH 压缩时让 Claude Code 用自己的 `/compact` 压缩同一会话（同一 session id），并把 Claude 的摘要作为 DSH 摘要；失败时回落为一次性摘要 + 新会话 |
 | `usageStopPercent` | `95` | 5 小时套餐窗口用到此百分比时，当前回合在安全边界停下（保留已完成的工具结果），到窗口重置前拒绝所有 Claude 回合（含子代理）；`false` 关闭 |
 | `weeklyStopPercent` | `98` | 每周套餐窗口用到此百分比时执行同样的停摆（窗口按天重置，停摆可能持续数天）；`false` 关闭 |
-| `usageStopCompaction` | `true` | 停摆后是否用 Claude 自己的 `/compact` 压缩一次在线会话 |
+| `usageStopCompaction` | `true` | 停摆后是否用 Claude 自己的 `/compact` 压缩一次在线会话；压缩在 agent 进入 idle 时以 `/compact` 命令执行，会话里会出现可见的 `/compact` 卡片与压缩标记 |
 | `usageStopEndSession` | `true` | 压缩后结束这个 Claude Code 会话（清掉 resume 链与预热进程）：窗口重置后的下一回合从 DSH 的压缩历史开一个全新 Claude 会话 |
-| `compactAtTokens` | `0` | 上下文达到该 token 数（上一请求的 input + cache read + cache write）后，在下一回合结束时用 Claude 自己的 `/compact` 压缩在线会话，并保持同一 Claude 会话；`0` 关闭。没有原生压缩路径时只警告一次、不消耗摘要请求 |
+| `compactAtTokens` | `0` | 上下文达到该 token 数（上一请求的 input + cache read + cache write）后，在下一回合结束、agent 进入 idle 时用 Claude 自己的 `/compact` 压缩在线会话（走 `/compact` 命令，会话里有可见的压缩标记），并保持同一 Claude 会话；`0` 关闭。没有原生压缩路径时只警告一次、不消耗摘要请求 |
 | `models` | _(unset)_ | 仅在需要固定/改名时设置；默认由 Claude Code 自己的 `supportedModels()` 提供名称（如 `Sonnet 5.5`）、版本与上下文窗口，新模型发布后自动出现 |
 | `modelRefreshMs` | `600000` | 成功发现后的缓存时长；到期自动刷新，新模型无需重启即出现 |
 | `modelRetryMs` | `30000` | 发现失败后的重试间隔（不会永久缓存失败结果） |
