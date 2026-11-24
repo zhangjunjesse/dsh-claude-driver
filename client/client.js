@@ -142,26 +142,55 @@ window.__ModuleLoader__.load({
 			return { label: "Claude", cost, windows, visible: windows.length > 0 && (Boolean(stats) || onRoute) };
 		}
 
-		/** The page draft: a checkbox pair plus the threshold as a text field. */
+		/** The page draft: one row per knob, all as strings the inputs can hold. */
 		function stopDraftFrom(settings) {
-			const percent = settings?.usageStopPercent;
+			const fiveHour = settings?.usageStopPercent;
+			const weekly = settings?.weeklyStopPercent;
+			const tokens = Number(settings?.compactAtTokens);
+			const contextEnabled = Number.isFinite(tokens) && tokens > 0;
 			return {
-				enabled: percent !== false,
-				percent: typeof percent === "number" ? String(percent) : "95",
+				fiveHourEnabled: fiveHour !== false,
+				fiveHourPercent: typeof fiveHour === "number" ? String(fiveHour) : "95",
+				weeklyEnabled: weekly !== false,
+				weeklyPercent: typeof weekly === "number" ? String(weekly) : "98",
 				compaction: settings?.usageStopCompaction !== false,
 				endSession: settings?.usageStopEndSession !== false,
+				contextEnabled,
+				contextK: contextEnabled ? String(Math.round(tokens / 1000)) : "400",
 			};
 		}
 
+		const stopPercentOf = (enabled, raw) => {
+			if (enabled === false) return false;
+			const percent = Number(String(raw ?? "").trim());
+			return Number.isFinite(percent) && percent > 0 && percent <= 100 ? percent : null;
+		};
+
+		const stopTokensOf = (enabled, raw) => {
+			if (enabled === false) return 0;
+			const thousands = Number(String(raw ?? "").trim());
+			if (!Number.isFinite(thousands) || thousands < 10 || thousands > 2000) return null;
+			return Math.round(thousands * 1000);
+		};
+
 		/** Turn the draft into the patch the host route validates, or say why not. */
 		function stopPatchFrom(draft) {
-			const flags = { usageStopCompaction: draft?.compaction !== false, usageStopEndSession: draft?.endSession !== false };
-			if (draft?.enabled === false) return { ok: true, value: { ...flags, usageStopPercent: false } };
-			const percent = Number(String(draft?.percent ?? "").trim());
-			if (!Number.isFinite(percent) || percent <= 0 || percent > 100) {
-				return { ok: false, error: "Enter a percentage from 1 to 100, or turn the stop off." };
-			}
-			return { ok: true, value: { ...flags, usageStopPercent: percent } };
+			const fiveHour = stopPercentOf(draft?.fiveHourEnabled, draft?.fiveHourPercent);
+			if (fiveHour === null) return { ok: false, error: "Enter a 5-hour threshold from 1 to 100, or turn it off." };
+			const weekly = stopPercentOf(draft?.weeklyEnabled, draft?.weeklyPercent);
+			if (weekly === null) return { ok: false, error: "Enter a weekly threshold from 1 to 100, or turn it off." };
+			const tokens = stopTokensOf(draft?.contextEnabled, draft?.contextK);
+			if (tokens === null) return { ok: false, error: "Enter a context threshold from 10 to 2000 (thousands of tokens), or turn it off." };
+			return {
+				ok: true,
+				value: {
+					usageStopPercent: fiveHour,
+					weeklyStopPercent: weekly,
+					usageStopCompaction: draft?.compaction !== false,
+					usageStopEndSession: draft?.endSession !== false,
+					compactAtTokens: tokens,
+				},
+			};
 		}
 
 		const usageResetIn = (iso) => {
@@ -401,7 +430,7 @@ window.__ModuleLoader__.load({
 						alive = false;
 					};
 				}, [attempt]);
-				if (view === "summary") return "Stop Claude turns at the 5-hour window limit, compact the live Claude session natively, and end it.";
+				if (view === "summary") return "Stop at 95% of the 5-hour window and 98% of the weekly window, compact natively, end the session, and compact the context at a token threshold.";
 				if (state.status === "loading") return h("p", { style: noteStyle }, "Loading the usage-stop settings…");
 				if (state.status === "error") {
 					return h(
@@ -451,30 +480,51 @@ window.__ModuleLoader__.load({
 					h(
 						"p",
 						{ style: noteStyle },
-						"When the account-wide 5-hour plan window reaches the threshold, the running turn ends at its next safe tool boundary, the active goal pauses, and new Claude turns are refused until the window resets.",
-					),
-					h(
-						"label",
-						{ style: rowStyle },
-						h("input", { type: "checkbox", checked: rows.enabled, onChange: (event) => edit({ enabled: event.target.checked }) }),
-						"Stop Claude turns at the 5-hour window limit",
+						"When the account-wide 5-hour or weekly plan window reaches its threshold, the running turn ends at its next safe tool boundary, the active goal pauses, and new Claude turns are refused until that window resets. The context threshold compacts the live session natively at the next turn end without stopping anything.",
 					),
 					h(
 						"span",
 						{ style: rowStyle },
-						"Threshold",
+						h(
+							"label",
+							{ style: { display: "flex", alignItems: "center", gap: 6 } },
+							h("input", { type: "checkbox", checked: rows.fiveHourEnabled, onChange: (event) => edit({ fiveHourEnabled: event.target.checked }) }),
+							"Stop at the 5-hour window",
+						),
 						h("input", {
 							type: "number",
 							min: 1,
 							max: 100,
 							step: 1,
-							value: rows.percent,
+							value: rows.fiveHourPercent,
 							"aria-label": "Stop threshold, percent of the 5-hour window",
-							disabled: !rows.enabled,
+							disabled: !rows.fiveHourEnabled,
 							style: inputStyle,
-							onChange: (event) => edit({ percent: event.target.value }),
+							onChange: (event) => edit({ fiveHourPercent: event.target.value }),
 						}),
-						h("span", { style: noteStyle }, "% of the window"),
+						h("span", { style: noteStyle }, "%"),
+					),
+					h(
+						"span",
+						{ style: rowStyle },
+						h(
+							"label",
+							{ style: { display: "flex", alignItems: "center", gap: 6 } },
+							h("input", { type: "checkbox", checked: rows.weeklyEnabled, onChange: (event) => edit({ weeklyEnabled: event.target.checked }) }),
+							"Stop at the weekly window",
+						),
+						h("input", {
+							type: "number",
+							min: 1,
+							max: 100,
+							step: 1,
+							value: rows.weeklyPercent,
+							"aria-label": "Stop threshold, percent of the weekly window",
+							disabled: !rows.weeklyEnabled,
+							style: inputStyle,
+							onChange: (event) => edit({ weeklyPercent: event.target.value }),
+						}),
+						h("span", { style: noteStyle }, "%"),
 					),
 					h(
 						"label",
@@ -488,17 +538,39 @@ window.__ModuleLoader__.load({
 						h("input", { type: "checkbox", checked: rows.endSession, onChange: (event) => edit({ endSession: event.target.checked }) }),
 						"End the Claude session after compacting (the next turn starts fresh)",
 					),
+					h(
+						"span",
+						{ style: rowStyle },
+						h(
+							"label",
+							{ style: { display: "flex", alignItems: "center", gap: 6 } },
+							h("input", { type: "checkbox", checked: rows.contextEnabled, onChange: (event) => edit({ contextEnabled: event.target.checked }) }),
+							"Compact the context at",
+						),
+						h("input", {
+							type: "number",
+							min: 10,
+							max: 2000,
+							step: 10,
+							value: rows.contextK,
+							"aria-label": "Context threshold, thousands of tokens",
+							disabled: !rows.contextEnabled,
+							style: inputStyle,
+							onChange: (event) => edit({ contextK: event.target.value }),
+						}),
+						h("span", { style: noteStyle }, "k tokens (native)"),
+					),
 					capabilities.nativeCompaction === false
-						? h("p", { style: noteStyle }, "Claude native compaction is disabled in this deployment (nativeCompaction: false), so the stop cannot compact the live Claude session.")
+						? h("p", { style: noteStyle }, "Claude native compaction is disabled in this deployment (nativeCompaction: false): the plan-window stop falls back to a DSH one-shot summary, and the context threshold leaves automatic compaction to DSH.")
 						: null,
 					capabilities.resumeChain === false
-						? h("p", { style: noteStyle }, "The resume chain is disabled (resumeChain: false), so there is no Claude session to end.")
+						? h("p", { style: noteStyle }, "The resume chain is disabled (resumeChain: false): Claude native compaction and ending the session are unavailable.")
 						: null,
 					message ? h("p", { style: message === "Saved." ? noteStyle : errorStyle, role: "status" }, message) : null,
 					h(
 						"div",
 						null,
-						h("button", { type: "button", style: buttonStyle, disabled: saving || draft === null, onClick: save }, saving ? "Saving…" : "Save usage stop"),
+						h("button", { type: "button", style: buttonStyle, disabled: saving || draft === null, onClick: save }, saving ? "Saving…" : "Save"),
 					),
 				);
 			}

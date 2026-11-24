@@ -52,6 +52,33 @@ test('a disabled or out-of-range threshold never stops', () => {
   assert.equal(stopDecision(snapshot(99), { stopAtPercent: false }).stop, false)
 })
 
+test('the weekly window stops at its own threshold, default 98', () => {
+  const weekly = (percent) => ({ ok: true, windows: { weekly: { percent, resetsAt: resetAt(2 * 24 * 3_600_000) } } })
+  const trip = stopDecision(weekly(98), {})
+  assert.equal(trip.stop, true)
+  assert.equal(trip.window, 'weekly')
+  assert.equal(trip.stopAtPercent, 98)
+  assert.equal(stopDecision(weekly(97.9), {}).stop, false)
+  assert.equal(stopDecision(weekly(99), { weeklyStopPercent: 99.5 }).stop, false, 'a higher configured weekly threshold is honored')
+  assert.equal(stopDecision(weekly(99), { weeklyStopPercent: false }).stop, false, 'false disables the weekly guard')
+})
+
+test('the five-hour window is reported before the weekly one when both are over', () => {
+  const both = { ok: true, windows: { fiveHour: { percent: 96, resetsAt: resetAt() }, weekly: { percent: 99, resetsAt: resetAt(2 * 24 * 3_600_000) } } }
+  const trip = stopDecision(both, {})
+  assert.equal(trip.window, 'fiveHour')
+  assert.equal(trip.percent, 96)
+})
+
+test('the weekly notice names the window, the reading, the threshold and the reset', () => {
+  const decision = stopDecision({ ok: true, windows: { weekly: { percent: 99, resetsAt: resetAt(2 * 24 * 3_600_000) } } }, {})
+  const notice = formatStopNotice(decision)
+  assert.match(notice, /weekly/i)
+  assert.match(notice, /99%/)
+  assert.match(notice, /98%/)
+  assert.match(notice, /resets in 2d/i)
+})
+
 test('a stale reading (the window already reset) does not stop the next turn', () => {
   const past = new Date(Date.now() - 1000).toISOString()
   assert.equal(stopDecision(snapshot(99, past), {}).stop, false)
@@ -123,7 +150,7 @@ function ctxFor(session, extra = {}) {
 
 // One tool round-trip, then (only if the guard failed to stop it) a second
 // model response. The usage control request reports 96% of the 5-hour window.
-function tripQuery(seen = {}) {
+function tripQuery(seen = {}, rateLimits = { five_hour: { utilization: 96, resets_at: resetAt() } }) {
   return ({ options }) => {
     const generator = (async function* () {
       yield { type: 'system', subtype: 'init', session_id: 'claude-1' }
@@ -144,7 +171,7 @@ function tripQuery(seen = {}) {
       yield { type: 'assistant', parent_tool_use_id: null, session_id: 'claude-1', message: { role: 'assistant', content: [{ type: 'text', text: 'should not stream after the stop' }], usage: { input_tokens: 1300, output_tokens: 5 } } }
       yield { type: 'result', subtype: 'success', is_error: false, session_id: 'claude-1', result: 'after', usage: { input_tokens: 1300, output_tokens: 5 } }
     })()
-    generator[USAGE] = async () => ({ rate_limits_available: true, rate_limits: { five_hour: { utilization: 96, resets_at: resetAt() } } })
+    generator[USAGE] = async () => ({ rate_limits_available: true, rate_limits: rateLimits })
     options.abortController?.signal.addEventListener('abort', () => { seen.aborted = true })
     return generator
   }
@@ -246,6 +273,18 @@ test('stop compaction runs once on the tripped session and retries a busy agent'
   assert.equal(attempts, 2)
   await compactStoppedSession(ctx, { sessionId: 's1' }, {}, { retryDelayMs: 1 })
   assert.equal(attempts, 2, 'one compaction per trip')
+  usageGuard.reset()
+})
+
+test('a turn at 99% of the weekly window stops and the next turn is refused until it resets', async () => {
+  usageGuard.reset()
+  const session = mockSession()
+  const weeklyLimits = { seven_day: { utilization: 99, resets_at: resetAt(2 * 24 * 3_600_000) } }
+  const chunks = await drain(ctxFor(session), opts, { queryImpl: tripQuery({}, weeklyLimits), usageStopPercent: 95, weeklyStopPercent: 98 })
+  assert.match(text(chunks), /weekly/i)
+  assert.equal(usageGuard.stopped(), true)
+  const refused = await drain(ctxFor(session), opts, { queryImpl: tripQuery({}, weeklyLimits), usageStopPercent: 95, weeklyStopPercent: 98 })
+  assert.match(text(refused), /weekly/i)
   usageGuard.reset()
 })
 
