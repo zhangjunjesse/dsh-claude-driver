@@ -1,7 +1,8 @@
-// The 5-hour usage stop keeps its three knobs outside the profile patch so the
-// Plugins page can change them without editing YAML: stop threshold, compact the
-// live Claude session, and end that Claude session afterwards. The store is a
-// small JSON file; the route is what the Plugins page talks to.
+// The plan-window stop keeps its knobs outside the profile patch so the Plugins
+// page can change them without editing YAML: the 5-hour threshold, the weekly
+// threshold, native compaction, ending the session afterwards, and the Claude
+// context token threshold for native autocompaction. The store is a small JSON
+// file; the route is what the Plugins page talks to.
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
@@ -48,10 +49,12 @@ test('the store starts with no overrides so the YAML config still decides', () =
   const store = createStopSettingsStore({ file: '/store/usage-stop.json', fs: memoryFs() })
   assert.deepEqual(store.get(), {})
   assert.deepEqual(store.effective({}), { ...STOP_DEFAULTS })
-  assert.deepEqual(store.effective({ usageStopPercent: 80, usageStopCompaction: false }), {
+  assert.deepEqual(store.effective({ usageStopPercent: 80, usageStopCompaction: false, compactAtTokens: 400000 }), {
     usageStopPercent: 80,
+    weeklyStopPercent: 98,
     usageStopCompaction: false,
     usageStopEndSession: true,
+    compactAtTokens: 400000,
   })
 })
 
@@ -59,13 +62,24 @@ test('a saved override wins over the YAML value, and it survives a reload', () =
   const fs = memoryFs()
   const file = '/store/usage-stop.json'
   const store = createStopSettingsStore({ file, fs })
-  store.update({ usageStopPercent: 60, usageStopEndSession: false })
-  assert.deepEqual(store.get(), { usageStopPercent: 60, usageStopEndSession: false })
-  assert.deepEqual(JSON.parse(fs.files.get(file)), { usageStopPercent: 60, usageStopEndSession: false })
+  store.update({ usageStopPercent: 60, weeklyStopPercent: false, usageStopEndSession: false, compactAtTokens: 250000 })
+  assert.deepEqual(store.get(), { usageStopPercent: 60, weeklyStopPercent: false, usageStopEndSession: false, compactAtTokens: 250000 })
+  assert.deepEqual(JSON.parse(fs.files.get(file)), {
+    usageStopPercent: 60,
+    weeklyStopPercent: false,
+    usageStopEndSession: false,
+    compactAtTokens: 250000,
+  })
   assert.deepEqual(fs.dirs, ['/store'], 'the storage directory is created before the write')
-  assert.deepEqual(store.effective({ usageStopPercent: 80 }), { usageStopPercent: 60, usageStopCompaction: true, usageStopEndSession: false })
+  assert.deepEqual(store.effective({ usageStopPercent: 80 }), {
+    usageStopPercent: 60,
+    weeklyStopPercent: false,
+    usageStopCompaction: true,
+    usageStopEndSession: false,
+    compactAtTokens: 250000,
+  })
   const reloaded = createStopSettingsStore({ file, fs })
-  assert.deepEqual(reloaded.get(), { usageStopPercent: 60, usageStopEndSession: false })
+  assert.deepEqual(reloaded.get(), store.get())
 })
 
 test('a corrupt settings file is ignored and reported, never fatal', () => {
@@ -76,30 +90,59 @@ test('a corrupt settings file is ignored and reported, never fatal', () => {
   assert.match(logger.lines[0], /usage-stop\.json/)
 })
 
-test('only usable values are stored: false disables the stop, junk is dropped', () => {
-  assert.deepEqual(normalizeStopSettings({ usageStopPercent: 95, usageStopCompaction: false, usageStopEndSession: true }), {
-    usageStopPercent: 95,
-    usageStopCompaction: false,
-    usageStopEndSession: true,
-  })
-  assert.deepEqual(normalizeStopSettings({ usageStopPercent: false }), { usageStopPercent: false })
+test('only usable values are stored: false disables a window, 0 disables context compaction', () => {
+  assert.deepEqual(
+    normalizeStopSettings({ usageStopPercent: 95, weeklyStopPercent: 98, usageStopCompaction: false, usageStopEndSession: true, compactAtTokens: 400000 }),
+    { usageStopPercent: 95, weeklyStopPercent: 98, usageStopCompaction: false, usageStopEndSession: true, compactAtTokens: 400000 },
+  )
+  assert.deepEqual(normalizeStopSettings({ usageStopPercent: false, weeklyStopPercent: false }), { usageStopPercent: false, weeklyStopPercent: false })
+  assert.deepEqual(normalizeStopSettings({ compactAtTokens: 0 }), { compactAtTokens: 0 })
   for (const percent of [0, -1, 101, Number.NaN, '95', null, undefined]) {
     assert.deepEqual(normalizeStopSettings({ usageStopPercent: percent }), {}, `${String(percent)} is not a threshold`)
+    assert.deepEqual(normalizeStopSettings({ weeklyStopPercent: percent }), {}, `${String(percent)} is not a weekly threshold`)
+  }
+  for (const tokens of [-1, 9999, 2_000_001, Number.NaN, '400k', null]) {
+    assert.deepEqual(normalizeStopSettings({ compactAtTokens: tokens }), {}, `${String(tokens)} is not a context threshold`)
   }
   assert.deepEqual(normalizeStopSettings({ usageStopEndSession: 'yes' }), {})
   assert.deepEqual(normalizeStopSettings(null), {})
 })
 
 test('the route patch accepts a full settings object and rejects anything unusable', () => {
-  assert.deepEqual(validateStopPatch({ usageStopPercent: 90, usageStopCompaction: true, usageStopEndSession: false }), {
-    ok: true,
-    value: { usageStopPercent: 90, usageStopCompaction: true, usageStopEndSession: false },
+  assert.deepEqual(
+    validateStopPatch({
+      usageStopPercent: 90,
+      weeklyStopPercent: 97,
+      usageStopCompaction: true,
+      usageStopEndSession: false,
+      compactAtTokens: 350000,
+    }),
+    {
+      ok: true,
+      value: {
+        usageStopPercent: 90,
+        weeklyStopPercent: 97,
+        usageStopCompaction: true,
+        usageStopEndSession: false,
+        compactAtTokens: 350000,
+      },
+    },
+  )
+  assert.deepEqual(validateStopPatch({ usageStopPercent: false, weeklyStopPercent: false, compactAtTokens: 0 }).value, {
+    usageStopPercent: false,
+    weeklyStopPercent: false,
+    compactAtTokens: 0,
   })
-  assert.deepEqual(validateStopPatch({ usageStopPercent: false }).value, { usageStopPercent: false })
   for (const bad of [0, 101, '95', null]) {
     const result = validateStopPatch({ usageStopPercent: bad })
     assert.equal(result.ok, false, `${String(bad)} must be refused`)
     assert.match(result.error, /usageStopPercent/)
+    assert.equal(validateStopPatch({ weeklyStopPercent: bad }).ok, false)
+  }
+  for (const bad of [-1, 9999, 2_000_001, '400k']) {
+    const result = validateStopPatch({ compactAtTokens: bad })
+    assert.equal(result.ok, false, `${String(bad)} must be refused`)
+    assert.match(result.error, /compactAtTokens/)
   }
   assert.equal(validateStopPatch({ usageStopEndSession: 'off' }).ok, false)
   assert.equal(validateStopPatch({}).ok, false, 'an empty patch is not a save')
@@ -156,8 +199,8 @@ test('GET serves the effective settings and the native-compaction capability', a
   const { res, json } = await call(route, 'GET')
   assert.equal(res.statusCode, 200)
   assert.equal(json.settings.usageStopPercent, 80)
-  assert.equal(json.settings.usageStopCompaction, true)
-  assert.equal(json.settings.usageStopEndSession, true)
+  assert.equal(json.settings.weeklyStopPercent, 98)
+  assert.equal(json.settings.compactAtTokens, 0)
   assert.deepEqual(json.capabilities, { nativeCompaction: true, resumeChain: true })
 })
 
@@ -170,18 +213,19 @@ test('POST validates, persists, applies, and answers the new effective settings'
     capabilities: () => ({ nativeCompaction: true, resumeChain: true }),
     sync: (settings) => synced.push(settings),
   })
-  const { res, json } = await call(route, 'POST', { usageStopPercent: 90, usageStopCompaction: true, usageStopEndSession: true })
+  const body = { usageStopPercent: 90, weeklyStopPercent: 97, usageStopCompaction: true, usageStopEndSession: true, compactAtTokens: 400000 }
+  const { res, json } = await call(route, 'POST', body)
   assert.equal(res.statusCode, 200)
-  assert.deepEqual(store.get(), { usageStopPercent: 90, usageStopCompaction: true, usageStopEndSession: true })
-  assert.deepEqual(json.settings, { usageStopPercent: 90, usageStopCompaction: true, usageStopEndSession: true })
-  assert.deepEqual(synced, [json.settings], 'the live driver settings are updated with the saved value')
+  assert.deepEqual(store.get(), body)
+  assert.deepEqual(json.settings, body)
+  assert.deepEqual(synced, [body], 'the live driver settings are updated with the saved value')
 })
 
 test('POST refuses bad input without touching the store', async () => {
   const fs = memoryFs()
   const store = createStopSettingsStore({ file: '/store/usage-stop.json', fs })
   const route = register({ store, effective: () => store.effective({}), capabilities: () => ({}) })
-  for (const body of [{ usageStopPercent: 101 }, { usageStopEndSession: 'no' }, { oops: 1 }, '{bad json']) {
+  for (const body of [{ usageStopPercent: 101 }, { weeklyStopPercent: 0 }, { compactAtTokens: 5000 }, { usageStopEndSession: 'no' }, { oops: 1 }, '{bad json']) {
     const { res, json } = await call(route, 'POST', body)
     assert.equal(res.statusCode, 400, `${JSON.stringify(body)} must be refused`)
     assert.ok(json.error)
