@@ -131,9 +131,12 @@ The Claude plan's 5-hour window is account-wide, so one long goal turn can consu
 1. finishes the tool call in flight and keeps its result, then ends the turn at that boundary with a visible notice (never mid-write, never as an error);
 2. pauses the session's active goal, so no further round starts against the stopped guard;
 3. compacts the live Claude session once with Claude's own `/compact`, so resuming later does not replay the full history;
-4. refuses every new `claude-code` turn in the host (main model and subagents) until the window resets.
+4. ends that Claude session after the compaction (`usageStopEndSession`, default `true`): the resume chain and any prewarmed process are dropped, so after the window resets the next turn starts a fresh Claude session over DSH's compacted history instead of resuming the one that burned the window;
+5. refuses every new `claude-code` turn in the host (main model and subagents) until the window resets.
 
-When the window resets the stop lifts by itself; a goal paused by the stop stays paused until you resume it. Internal maintenance calls (session title, compaction) still run. Set `usageStopPercent: false` to disable the guard, or `usageStopCompaction: false` to stop without spending the extra compaction request.
+When the window resets the stop lifts by itself; a goal paused by the stop stays paused until you resume it. Internal maintenance calls (session title, compaction) still run. Set `usageStopPercent: false` to disable the guard, `usageStopCompaction: false` to stop without spending the extra compaction request, or `usageStopEndSession: false` to keep resuming the compacted Claude session.
+
+The three knobs are also editable from **Plugins → Claude Code driver → claude-driver → Configure**, without editing YAML or restarting DSH. The page saves to `$DSH_HOME/storages/claude-driver/usage-stop.json`, which wins over the YAML values; the native-compaction capability reported by that deployment decides whether the stop can compact the live Claude session.
 
 ## Install
 
@@ -490,6 +493,7 @@ cd ~/.dsh/profiles/node_modules/dsh-claude-driver && npm i --no-save
 | `nativeCompaction` | `true` | DSH 压缩时让 Claude Code 用自己的 `/compact` 压缩同一会话（同一 session id），并把 Claude 的摘要作为 DSH 摘要；失败时回落为一次性摘要 + 新会话 |
 | `usageStopPercent` | `95` | 5 小时套餐窗口用到此百分比时，当前回合在安全边界停下（保留已完成的工具结果），到窗口重置前拒绝所有 Claude 回合（含子代理）；`false` 关闭 |
 | `usageStopCompaction` | `true` | 用量停摆后是否用 Claude 自己的 `/compact` 压缩一次在线会话，便于重置后续跑 |
+| `usageStopEndSession` | `true` | 压缩后结束这个 Claude Code 会话（清掉 resume 链与预热进程）：窗口重置后的下一回合从 DSH 的压缩历史开一个全新 Claude 会话，而不是续用烧掉配额的旧会话 |
 | `models` | _(unset)_ | 仅在需要固定/改名时设置；默认由 Claude Code 自己的 `supportedModels()` 提供名称（如 `Sonnet 5.5`）、版本与上下文窗口，新模型发布后自动出现 |
 | `modelRefreshMs` | `600000` | 成功发现后的缓存时长；到期自动刷新，新模型无需重启即出现 |
 | `modelRetryMs` | `30000` | 发现失败后的重试间隔（不会永久缓存失败结果） |

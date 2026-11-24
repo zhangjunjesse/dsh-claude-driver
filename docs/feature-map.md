@@ -13,7 +13,7 @@ Status: **direct** · **bridged** (DSH runs it; Claude calls it) · **limited** 
 |---|---|---|
 | Model picker, reasoning effort | direct | Picker lists Claude Code's own `supportedModels()`; the selection is Claude's `model`/`effort`. |
 | `/compact`, automatic compaction | direct | Claude's own `/compact` on the live session (same id); its summary is DSH's summary. |
-| Five-hour usage stop | direct | At `usageStopPercent` (95% default) the active turn ends at its next safe tool boundary, the goal pauses, the live session is compacted once, and new Claude turns are refused until the window resets. |
+| Five-hour usage stop | direct | At `usageStopPercent` (95% default) the active turn ends at its next safe tool boundary, the goal pauses, the live session is compacted once, that Claude session is ended (`usageStopEndSession`, default on), and new Claude turns are refused until the window resets. The three knobs are editable on the Plugins page. |
 | Permission mode / sandbox (`/permission`, presets) | direct | `danger-full-access`→`bypassPermissions`, `workspace-write`→`acceptEdits`, `read-only`→`plan`. |
 | Approval (ask/never) | bridged | Bridged DSH tools run through DSH approval; `approveBuiltinTools` routes Claude built-ins through it too. |
 | System prompt, persona, plan-mode policy, skills index, tool guidance | direct | DSH's system prompt becomes Claude's system prompt (appended to the `claude_code` preset), re-rendered every request so changes reach a resumed session. |

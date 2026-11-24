@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import { after, before, test } from 'node:test'
-import { clearResumeOnCompaction, getResumeSessions, streamClaudeChunks } from '../lib/index.js'
+import { clearResumeOnCompaction, endClaudeSession, getResumeSessions, streamClaudeChunks } from '../lib/index.js'
 import { startMockAnthropic } from './support/mock-anthropic.mjs'
 
 const require = createRequire(import.meta.url)
@@ -75,5 +75,32 @@ test('e2e: /compact compacts the live Claude session natively and it keeps worki
 
   const turn3 = await run({ sessionId, messages: [user('[compacted summary]'), { role: 'assistant', content: [{ type: 'text', text: 'ok' }] }, user('What was the codeword?')] })
   assert.equal(textOf(turn3), 'PELICAN-42', 'compacted Claude session still knows the codeword')
+  getResumeSessions().delete(sessionId)
+})
+
+test('e2e: ending the Claude session after a native compaction starts a fresh one that still works', opts, async () => {
+  const sessionId = 'dsh-e2e-end-session'
+  const turn1 = [user('Remember the codeword PELICAN-42. Reply only: ok')]
+  assert.equal((await run({ sessionId, messages: turn1 })).at(-1).reason.kind, 'stop')
+  const first = getResumeSessions().get(sessionId)
+  assert.ok(first, 'turn 1 opened a Claude session')
+
+  const history = [...turn1, { role: 'assistant', content: [{ type: 'text', text: 'ok' }] }]
+  const compacted = await run({ sessionId, purpose: 'compaction', messages: [...history, user('Summarize the conversation.')] })
+  assert.equal(compacted.at(-1).reason.kind, 'stop')
+  const summary = textOf(compacted)
+  assert.match(summary, /PELICAN-42/, 'the compaction summary is Claude\'s own')
+  assert.equal(getResumeSessions().get(sessionId), first, 'native compaction keeps the chain until the stop ends it')
+
+  assert.equal(endClaudeSession(sessionId), true)
+  assert.equal(getResumeSessions().get(sessionId), undefined, 'the resume chain is gone')
+
+  // DSH replays the compacted history into the fresh Claude session.
+  const replay = [user('This session is being continued from a previous conversation.\n' + summary), user('What was the codeword?')]
+  const third = await run({ sessionId, messages: replay })
+  assert.equal(textOf(third), 'PELICAN-42', 'the fresh session still knows the codeword')
+  const second = getResumeSessions().get(sessionId)
+  assert.ok(second, 'the next turn opened a Claude session')
+  assert.notEqual(second, first, 'it is a different Claude session, not the ended one')
   getResumeSessions().delete(sessionId)
 })
