@@ -8,7 +8,7 @@ import { DSH_OWNED_BUILTINS } from '../lib/index.js'
 
 const root = join(import.meta.dirname, '..')
 const doc = readFileSync(join(root, 'docs/feature-map.md'), 'utf8')
-const source = ['lib/index.js', 'lib/native-compact.js', 'lib/permission-sync.js', 'lib/job-mirror.js', 'lib/claude-events.js'].map((f) => readFileSync(join(root, f), 'utf8')).join('\n')
+const source = ['lib/index.js', 'lib/delegate.js', 'lib/native-compact.js', 'lib/permission-sync.js', 'lib/job-mirror.js', 'lib/claude-events.js'].map((f) => readFileSync(join(root, f), 'utf8')).join('\n')
 
 test('every Claude built-in the map says is withheld is in the overlap table', () => {
   const withheld = Object.values(DSH_OWNED_BUILTINS).flat()
