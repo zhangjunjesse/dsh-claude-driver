@@ -124,6 +124,12 @@ DSH's `/compact` and its automatic compaction both compact the **live Claude Cod
 
 DSH may ask for a summary more than once without a user turn in between (it retries when a summary is not small enough). Claude is compacted once; repeat requests reuse the same summary until the session runs another turn.
 
+## Resume across restarts
+
+The DSH-session → Claude-session mapping is persisted to `$DSH_HOME/storages/claude-driver/resume.json`, so restarting DSH resumes the existing Claude session instead of booting a new one. That difference is expensive: a fresh boot replays the whole rendered history as one prompt, a cold cache prefix, so every prompt token is billed as a cache write (1.25×). Measured on a 355k-token session, one restart cost 355,389 cache-write tokens and 0 cache reads; the resumed turn would have sent only the new tail and read the rest from cache.
+
+An entry is used only when the session still routes to `claude-code` and runs in the same working directory. It is dropped by a DSH compaction that Claude did not perform, by `/claude-fresh`, by the plan-window stop ending the session, by a switch to another provider, and by a failed resume (which retries fresh). The file is pruned to the 100 newest sessions and is safe to delete; a lost entry only costs one cold replay.
+
 ## Plan-window stop (5-hour and weekly)
 
 The Claude plan windows are account-wide, so one long goal turn can consume the quota for every other session. At `usageStopPercent` (default `95`) of the 5-hour window, or `weeklyStopPercent` (default `98`) of the weekly window, the driver:
@@ -198,14 +204,14 @@ DSH（DeepSeek Harness）宿主插件：让 DSH 会话把**本地 Claude Code �
 | 主模型接管（B1） | `llm/stream` 短路路由 `claude-code`，每步驱动 Claude Code |
 | 模型选择器集成 | 注册目录 adapter，UI 里出现 "Claude Code" 分组；默认**自动发现** SDK 的真实模型（懒加载 + 缓存） |
 | 模型目录自动发现 | `autoDiscoverModels`（默认开）：新模型升 SDK + 重启即自动进入 picker，零插件/配置改动 |
-| resume 续接链 | 同一 DSH 会话复用同一个 Claude Code 会话，第 2 轮起免冷启动 |
+| resume 续接链 | 同一 DSH 会话复用同一个 Claude Code 会话，第 2 轮起免冷启动；映射持久化到磁盘，DSH 重启后继续 resume 而不是重开会话（重开会把整段历史当冷前缀重发，全部按 cache write 计费） |
 | token 级流式 | `includePartialMessages`，文字逐 token 实时呈现 |
 | DSH 工具桥接（B2） | DSH 工具经 MCP 桥进 Claude Code，走 DSH 沙箱/审批 |
 | 原生工具卡片 | 桥接的 DSH 工具写 `tool/call`+`tool/result` 事件，前端渲染原生卡片 |
 | 内置工具进度 | Claude 内置工具（Bash/Edit…）以文本进度旁白兜底 |
 | subagent provider | 填上官方预留的 `claude-code` subagent 占位缝（`subagent_claude_code` 工具） |
 | 跨模型历史兼容 | 补写配对 assistant tool-call 事件，切回 deepseek 不报 400 |
-| resume 链治理 | 模型带 contextWindow（启用 DSH 自动压缩）+ 压缩后清链 + `/claude-fresh` 命令 |
+| resume 链治理 | 模型带 contextWindow（启用 DSH 自动压缩）+ 压缩后清链 + `/claude-fresh` 命令 + 切换 provider / 换工作目录 / resume 失败时清链 |
 | 登录过期自愈 | 回合因 Claude 登录过期/缺失失败（`AUTH`）时，自动拉起官方 `claude auth login`，把登录 URL 显示在思考区，登录完成后自动重试该回合**一次**；`/claude-login [code\|status\|cancel]` 手动入口；`autoLogin: false` 关闭自动流程 |
 | 后台任务保活 | `waitForBackgroundTasks`：持有本步直到 Claude Code 自己的后台任务跑完，否则它们会在回合结束后被杀 |
 | 子代理抢救 | `harvestOrphanedSubagents`：随进程一起死掉的子代理，下一轮从磁盘 transcript 捞回它们的产出 |
