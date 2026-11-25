@@ -30,7 +30,7 @@ function fakeLlm(catalog, { broken = [], efforts } = {}) {
     async resolveModelInfo(provider, model) {
       const known = (catalog[provider] ?? []).includes(model)
       if (!known) throw new Error(`model "${model}" is not served by "${provider}"`)
-      const table = efforts ?? { [DEEPSEEK_PREFERRED_MODEL]: ['low', 'high'] }
+      const table = efforts ?? { [DEEPSEEK_PREFERRED_MODEL]: ['low', 'high'], hy4: ['low', 'high'] }
       const list = table[model]
       return {
         provider,
@@ -52,7 +52,7 @@ const catalog = {
 function fakeSubagents({ provider = DEFAULT_SUBAGENT_PROVIDER, capabilities = { agentOptions: true }, start } = {}) {
   return {
     getProvider: (name) => (name === provider ? { name, capabilities } : undefined),
-    startActivation: start,
+    startActivation: start ?? (async () => fakeRun().run),
   }
 }
 
@@ -160,7 +160,7 @@ test('reasoning_effort is validated against the chosen model', async () => {
   assert.equal(await resolveDelegateEffort(llm, route, 'high', signal()), 'high')
   assert.equal(await resolveDelegateEffort(llm, route, undefined, signal()), undefined, 'omitted effort is omitted, not defaulted')
   await assert.rejects(resolveDelegateEffort(llm, route, 'max', signal()), /available: low, high/)
-  await assert.rejects(resolveDelegateEffort(llm, { provider: 'opencode-go', model: 'hy4' }, 'high', signal()), /no reasoning efforts/)
+  await assert.rejects(resolveDelegateEffort(llm, { provider: 'claude-code', model: 'opus' }, 'high', signal()), /no reasoning efforts/)
 })
 
 test('the tool tells the model to brief the child like an intern and to delegate freely', () => {

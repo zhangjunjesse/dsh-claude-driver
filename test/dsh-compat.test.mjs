@@ -40,7 +40,7 @@ test('driver hooks the llm/stream waterfall and session/event firehose', () => {
 })
 
 test('driver only injects services the DSH runtime provides', () => {
-  const provided = new Set(['llm', 'commands', 'subagents', 'sessionProjections', 'webServer'])
+  const provided = new Set(['llm', 'commands', 'subagents', 'sessionProjections', 'webServer', 'tools'])
   const injected = [...source.matchAll(/ctx\.inject\(\[([^\]]*)\]/g)].flatMap((m) =>
     [...m[1].matchAll(/'([^']+)'/g)].map((n) => n[1]),
   )
