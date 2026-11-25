@@ -53,14 +53,17 @@ test('entries survive a new store instance (a process restart)', () => {
   assert.deepEqual(createResumeStore({ file }).all(), {})
 })
 
-test('a corrupt or missing file reads as empty and is replaced on the next write', () => {
+test('a corrupt store is distinguishable from a missing store and never causes an implicit fresh start', () => {
   const { dir, file } = tempStore()
   const store = createResumeStore({ file })
   assert.deepEqual(store.all(), {}, 'missing file')
+  assert.equal(store.failure(), undefined)
   writeFileSync(join(dir, 'garbage.json'), 'not json')
   const garbage = createResumeStore({ file: join(dir, 'garbage.json') })
   assert.deepEqual(garbage.all(), {})
-  assert.equal(garbage.set('s1', entry()), true)
+  assert.match(String(garbage.failure()), /SyntaxError/)
+  assert.equal(garbage.set('s1', entry()), true, 'an explicit write can replace the corrupt file')
+  assert.equal(garbage.failure(), undefined)
   assert.deepEqual(createResumeStore({ file: join(dir, 'garbage.json') }).get('s1'), entry())
 })
 
@@ -76,20 +79,20 @@ test('an unwritable store reports failure instead of throwing into the turn', ()
   assert.equal(store.remove('s1'), false)
 })
 
-test('the store keeps the newest entries only', () => {
+test('the store never silently prunes an established session id', () => {
   const { file } = tempStore()
   const store = createResumeStore({ file })
   for (let index = 0; index < MAX_RESUME_ENTRIES + 5; index += 1) store.set(`s${index}`, entry({ savedAt: index }))
   const kept = createResumeStore({ file }).all()
-  assert.equal(Object.keys(kept).length, MAX_RESUME_ENTRIES)
-  assert.equal(kept.s0, undefined, 'the oldest entry is pruned')
+  assert.equal(Object.keys(kept).length, MAX_RESUME_ENTRIES + 5)
+  assert.equal(kept.s0?.claudeSessionId, 'claude-1')
   assert.equal(kept[`s${MAX_RESUME_ENTRIES + 4}`]?.claudeSessionId, 'claude-1')
 })
 
-test('an entry is usable only for the same provider and working directory', () => {
+test('an entry is usable for the same provider across current Claude Code working directories', () => {
   assert.equal(isResumeEntryUsable(entry(), { provider: 'claude-code', cwd: '/work' }), true)
   assert.equal(isResumeEntryUsable(entry(), { provider: 'deepseek', cwd: '/work' }), false, 'route changed')
-  assert.equal(isResumeEntryUsable(entry(), { provider: 'claude-code', cwd: '/elsewhere' }), false, 'cwd changed')
+  assert.equal(isResumeEntryUsable(entry(), { provider: 'claude-code', cwd: '/elsewhere' }), true, 'current Claude Code resumes across directories by session id')
   for (const broken of [
     undefined,
     null,
@@ -111,6 +114,7 @@ test('hydration restores the mapping into a fresh in-memory session map', () => 
   assert.equal(hydrateResume({ sessionId: 's1', sessions, store, provider: 'claude-code', cwd: '/work' }), true)
   assert.equal(sessions.get('s1'), 'claude-1')
   assert.equal(hydrateResume({ sessionId: 's1', sessions, store, provider: 'claude-code', cwd: '/work' }), false, 'already hydrated')
+  assert.equal(hydrateResume({ sessionId: 's1', sessions: new Map(), store, provider: 'claude-code', cwd: '/elsewhere' }), true, 'cwd moves preserve the same Claude session')
   assert.equal(hydrateResume({ sessionId: 's2', sessions, store, provider: 'claude-code', cwd: '/work' }), false, 'unknown session')
   assert.equal(hydrateResume({ sessionId: 's1', sessions: new Map(), store, provider: 'deepseek', cwd: '/work' }), false, 'route changed')
   assert.equal(hydrateResume({ sessionId: 's1', sessions: new Map() }), false, 'no store')
@@ -142,6 +146,22 @@ test('remembering a session persists it; forgetting it drops the file entry', ()
   assert.equal(store.get('s1').cwd, '/work')
   assert.equal(rememberClaudeSession({ sessionId: '', claudeSessionId: 'x', sessions, store }), false)
   assert.equal(rememberClaudeSession({ sessionId: 's2', claudeSessionId: '', sessions, store }), false)
+})
+
+test('remembering never overwrites an established id or hides a persistence failure', () => {
+  const { dir, file } = tempStore()
+  const store = createResumeStore({ file })
+  const sessions = new Map([['s1', 'claude-original']])
+  store.set('s1', entry({ claudeSessionId: 'claude-original' }))
+  assert.equal(rememberClaudeSession({ sessionId: 's1', claudeSessionId: 'claude-changed', provider: 'claude-code', cwd: '/work', sessions, store }), false)
+  assert.equal(sessions.get('s1'), 'claude-original')
+  assert.equal(store.get('s1')?.claudeSessionId, 'claude-original')
+
+  const blocker = join(dir, 'blocked')
+  writeFileSync(blocker, 'not a directory')
+  const unwritable = createResumeStore({ file: join(blocker, RESUME_STORE_FILE) })
+  assert.equal(rememberClaudeSession({ sessionId: 's1', claudeSessionId: 'claude-original', provider: 'claude-code', cwd: '/work', sessions, store: unwritable }), false)
+  assert.equal(sessions.get('s1'), 'claude-original')
 })
 
 test('a compaction event preserves the persisted Claude session entry', () => {

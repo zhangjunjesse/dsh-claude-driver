@@ -3,8 +3,8 @@
 //      preceded by an assistant/message carrying the tool-call block
 //      (surfaceOp 'append', no sourceEventSeqs), so the derived history
 //      never contains orphan tool-results after a provider switch;
-//   B. resume-chain hygiene — compaction/summary drops the session's resume
-//      mapping, and the /claude-fresh command drops it on demand.
+//   B. resume-chain hygiene — compaction and provider events preserve the
+//      session's resume mapping; /claude-fresh drops it only on explicit demand.
 // Run: node test-cross-model-and-fresh.mjs
 import assert from 'node:assert/strict'
 import {
@@ -199,13 +199,13 @@ const toolSchemas = [
 // --- B1: clearResumeOnCompaction (injected map) ------------------------------
 {
   const sessions = new Map([['s1', 'sdk-1'], ['s2', 'sdk-2']])
-  assert.equal(clearResumeOnCompaction({ id: 's1' }, { type: 'compaction/summary', data: {} }, sessions), true)
-  assert.equal(sessions.has('s1'), false, 'mapping dropped on compaction/summary')
+  assert.equal(clearResumeOnCompaction({ id: 's1' }, { type: 'compaction/summary', data: {} }, sessions), false)
+  assert.equal(sessions.get('s1'), 'sdk-1', 'mapping preserved on compaction/summary')
   assert.equal(sessions.get('s2'), 'sdk-2', 'other sessions untouched')
   assert.equal(clearResumeOnCompaction({ id: 's2' }, { type: 'compaction/start', data: {} }, sessions), false, 'other event types ignored')
   assert.equal(clearResumeOnCompaction(undefined, { type: 'compaction/summary' }, sessions), false, 'missing session tolerated')
   assert.equal(clearResumeOnCompaction({ id: 's3' }, { type: 'compaction/summary' }, sessions), false, 'unknown session is a no-op')
-  assert.equal(sessions.size, 1)
+  assert.equal(sessions.size, 2)
 }
 
 // --- B2: apply() wires the session/event listener + command registration -----
@@ -232,9 +232,12 @@ const toolSchemas = [
   chain.set('dsh-sess-B', 'sdk-B')
   const fire = listeners.get('session/event')
   fire({ id: 'dsh-sess-A' }, { type: 'compaction/summary', seq: 9, data: { compactionId: 'c1' } })
-  assert.equal(chain.has('dsh-sess-A'), false, 'compaction/summary evicts the resume mapping')
+  assert.equal(chain.get('dsh-sess-A'), 'sdk-A', 'compaction/summary preserves the resume mapping')
   fire({ id: 'dsh-sess-B' }, { type: 'assistant/message', seq: 10, data: {} })
   assert.equal(chain.get('dsh-sess-B'), 'sdk-B', 'unrelated events leave the chain alone')
+  fire({ id: 'dsh-sess-B' }, { type: 'model/selection', seq: 11, data: { provider: 'deepseek' } })
+  assert.equal(chain.get('dsh-sess-B'), 'sdk-B', 'a provider selection never silently deletes the Claude id')
+  chain.delete('dsh-sess-A')
   chain.delete('dsh-sess-B')
 
   // /claude-fresh registered through the commands service (no inject on mocks)

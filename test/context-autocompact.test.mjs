@@ -138,7 +138,7 @@ test('a session that switched away from this route is not compacted by a stale w
   assert.equal(contextWatch.get('s1').armed, true, 'the crossing is still owed if the session returns to Claude')
 })
 
-test('without the native path it warns once per crossing and spends nothing', async () => {
+test('legacy flags cannot disable native autocompaction or select a fallback', async () => {
   const warnings = []
   let calls = 0
   const ctx = {
@@ -146,11 +146,10 @@ test('without the native path it warns once per crossing and spends nothing', as
     get: (name) => (name === 'agents' ? { get: () => agent } : name === 'compaction' ? { compactNow: async () => { calls += 1 } } : undefined),
   }
   contextWatch.note('s1', 500_000, 400_000)
-  assert.equal(await compactContextIfDue(ctx, { sessionId: 's1' }, { compactAtTokens: 400_000, resumeChain: false }), false)
-  assert.equal(await compactContextIfDue(ctx, { sessionId: 's1' }, { compactAtTokens: 400_000, resumeChain: false }), false)
-  assert.equal(calls, 0)
-  assert.equal(warnings.length, 1, 'one warning per crossing, not one per turn')
-  assert.match(warnings[0], /native/i)
+  assert.equal(await compactContextIfDue(ctx, { sessionId: 's1' }, { compactAtTokens: 400_000, nativeCompaction: false, resumeChain: false }), true)
+  assert.equal(await compactContextIfDue(ctx, { sessionId: 's1' }, { compactAtTokens: 400_000, nativeCompaction: false, resumeChain: false }), false)
+  assert.equal(calls, 1)
+  assert.doesNotMatch(warnings.join('\n'), /falls? back|one-shot/i)
 })
 
 test('a finished turn records the real last-request context', async () => {

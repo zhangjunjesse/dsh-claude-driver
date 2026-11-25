@@ -172,9 +172,10 @@ const TURN2 = [
   await runTurn('conv-d', TURN1, settings)
   const entry = getPrewarmPool().get('conv-d')
   const dropped = clearResumeOnCompaction({ id: 'conv-d' }, { type: 'compaction/summary' })
-  assert.equal(dropped, true)
+  assert.equal(dropped, false, 'compaction keeps the Claude session id')
   assert.ok(entry.disposed, 'compaction disposes the standing process')
   assert.equal(getPrewarmPool().has('conv-d'), false)
+  assert.equal(getResumeSessions().has('conv-d'), true)
 
   await runTurn('conv-e', TURN1, settings)
   const entryE = getPrewarmPool().get('conv-e')

@@ -23,11 +23,11 @@ const text = (chunks) => chunks.filter((c) => c.type === 'text-delta').map((c) =
 
 // Fake Claude that honours /compact on a resumed session like the real CLI:
 // compact_boundary, PostCompact hook with the summary, result, same session id.
-function fakeClaude(calls, { compactFails = false } = {}) {
+function fakeClaude(calls, { compactFails = false, sessionIdOverride } = {}) {
   return ({ prompt, options }) => {
     calls.push({ prompt, options })
     return (async function* () {
-      const sid = options.resume ?? 'claude-new'
+      const sid = sessionIdOverride ?? options.resume ?? 'claude-new'
       yield { type: 'system', subtype: 'init', session_id: sid }
       if (prompt === '/compact') {
         if (compactFails) {
@@ -112,6 +112,32 @@ test('nativeCompaction:false cannot select the removed one-shot fallback', async
   assert.equal(calls[0].options.resume, 'claude-mno')
   assert.equal(text(chunks), SUMMARY)
   sessions.delete('dsh-5')
+})
+
+test('resumeChain:false cannot disable native compaction', async () => {
+  const sessions = getResumeSessions()
+  sessions.set('dsh-legacy-chain', 'claude-legacy-chain')
+  const calls = []
+  const chunks = await drain(compactionCall('dsh-legacy-chain'), { queryImpl: fakeClaude(calls), resumeChain: false })
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].prompt, '/compact')
+  assert.equal(calls[0].options.resume, 'claude-legacy-chain')
+  assert.equal(text(chunks), SUMMARY)
+  sessions.delete('dsh-legacy-chain')
+})
+
+test('native compaction rejects a changed SDK session id without overwriting the chain', async () => {
+  const sessions = getResumeSessions()
+  sessions.set('dsh-mismatch', 'claude-expected')
+  const calls = []
+  const chunks = await drain(compactionCall('dsh-mismatch'), { queryImpl: fakeClaude(calls, { sessionIdOverride: 'claude-unexpected' }) })
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].options.resume, 'claude-expected')
+  assert.equal(text(chunks), '')
+  assert.equal(chunks.at(-1).reason.kind, 'error')
+  assert.equal(chunks.at(-1).reason.failure.code, 'NATIVE_COMPACTION')
+  assert.equal(sessions.get('dsh-mismatch'), 'claude-expected')
+  sessions.delete('dsh-mismatch')
 })
 
 test('a host restart hydrates the persisted Claude id before compacting', async () => {

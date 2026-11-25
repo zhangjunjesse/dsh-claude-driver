@@ -64,7 +64,7 @@ test('the compaction runs as /compact, the command DSH renders as a transcript c
   assert.deepEqual(calls[0].attachments, [])
   assert.equal(calls[0].target, agent)
   assert.ok(calls[0].signal instanceof AbortSignal)
-  assert.equal(calls.at(-1), 'end', 'the stop ends the Claude session after the cue landed')
+  assert.equal(calls.length, 1, 'the cue never invokes an end-session callback')
 })
 
 test('a stop that finds nothing to compact keeps the cheap Claude resume point', async () => {
