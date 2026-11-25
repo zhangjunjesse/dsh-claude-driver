@@ -31,7 +31,7 @@ Status: **direct** · **bridged** (DSH runs it; Claude calls it) · **limited** 
 | `read_image` | bridged | DSH `read_image` is bridged like any other tool, and its image block crosses the MCP boundary as image content: the model sees pixels, and the read renders as a DSH tool card. Claude's own `Read` stays as a second path. |
 | Ask-user questions | bridged | DSH `ask_user_question` card; Claude's own `AskUserQuestion` is withheld while it is offered. |
 | Setup (`dsh plugin add`, `/claude-doctor`) | direct | The CLI is installed automatically only when missing (see README); `/claude-doctor` reports every dependency and the login state. |
-| Session resume / fork | direct | One Claude session per DSH session (resume chain); `/claude-fresh` resets it. |
+| Session resume / fork | direct | One Claude session per DSH session (resume chain), persisted so a host restart resumes it instead of replaying the whole history as a cold cache prefix; `/claude-fresh` resets it, and a DSH compaction, provider switch or cwd change drops it. |
 | Session title | bridged | DSH's title request runs on Claude as a one-shot (not on the user's chain). |
 | Token meter / context % | direct | Real per-request usage from Claude; context windows from Claude's model info. |
 | `/export`, `/feedback`, session log, telemetry, settings UI, sidebar, terminal, file browser | n/a | DSH-side features over the DSH session log; they work unchanged because every Claude turn is recorded as DSH events. |
