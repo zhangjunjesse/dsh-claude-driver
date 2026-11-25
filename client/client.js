@@ -154,7 +154,6 @@ window.__ModuleLoader__.load({
 				weeklyEnabled: weekly !== false,
 				weeklyPercent: typeof weekly === "number" ? String(weekly) : "98",
 				compaction: settings?.usageStopCompaction !== false,
-				endSession: settings?.usageStopEndSession !== false,
 				contextEnabled,
 				contextK: contextEnabled ? String(Math.round(tokens / 1000)) : "400",
 			};
@@ -187,7 +186,6 @@ window.__ModuleLoader__.load({
 					usageStopPercent: fiveHour,
 					weeklyStopPercent: weekly,
 					usageStopCompaction: draft?.compaction !== false,
-					usageStopEndSession: draft?.endSession !== false,
 					compactAtTokens: tokens,
 				},
 			};
@@ -530,13 +528,7 @@ window.__ModuleLoader__.load({
 						"label",
 						{ style: rowStyle },
 						h("input", { type: "checkbox", checked: rows.compaction, onChange: (event) => edit({ compaction: event.target.checked }) }),
-						"Compact the live Claude session (Claude's own /compact)",
-					),
-					h(
-						"label",
-						{ style: rowStyle },
-						h("input", { type: "checkbox", checked: rows.endSession, onChange: (event) => edit({ endSession: event.target.checked }) }),
-						"End the Claude session after compacting (the next turn starts fresh)",
+						"Compact the live Claude session (Claude's own /compact, same session id)",
 					),
 					h(
 						"span",
@@ -560,11 +552,13 @@ window.__ModuleLoader__.load({
 						}),
 						h("span", { style: noteStyle }, "k tokens (native)"),
 					),
-					capabilities.nativeCompaction === false
-						? h("p", { style: noteStyle }, "Claude native compaction is disabled in this deployment (nativeCompaction: false): the plan-window stop falls back to a DSH one-shot summary, and the context threshold leaves automatic compaction to DSH.")
-						: null,
+					h(
+						"p",
+						{ style: noteStyle },
+						"Compaction always uses Claude's own /compact on the same Claude session id and never starts a fresh session; a failed /compact is reported instead of falling back. /claude-fresh is the only way to reset the session.",
+					),
 					capabilities.resumeChain === false
-						? h("p", { style: noteStyle }, "The resume chain is disabled (resumeChain: false): Claude native compaction and ending the session are unavailable.")
+						? h("p", { style: noteStyle }, "The resume chain is disabled (resumeChain: false): new turns do not establish a Claude session, but an already-established session id is still preserved and resumed.")
 						: null,
 					message ? h("p", { style: message === "Saved." ? noteStyle : errorStyle, role: "status" }, message) : null,
 					h(

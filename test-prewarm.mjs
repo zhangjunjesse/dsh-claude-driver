@@ -16,8 +16,10 @@
 //   9. adoption                     -> idle TTL DISARMED, so a long turn is
 //                                      never killed by its process's old
 //                                      deadline (2026-09-17 incident)
-//  10. adopted entry killed         -> run fails fast and retries cold; a dead
-//                                      transport must never hang the turn
+//  10. adopted entry killed         -> run fails fast, keeps the Claude id, and
+//                                      a re-sent turn resumes that same id; a
+//                                      dead transport must never hang the turn
+//                                      and never trigger a silent fresh fallback
 // Run: node test-prewarm.mjs
 import assert from 'node:assert/strict'
 import {
@@ -172,9 +174,10 @@ const TURN2 = [
   await runTurn('conv-d', TURN1, settings)
   const entry = getPrewarmPool().get('conv-d')
   const dropped = clearResumeOnCompaction({ id: 'conv-d' }, { type: 'compaction/summary' })
-  assert.equal(dropped, true)
+  assert.equal(dropped, false, 'compaction keeps the Claude session id')
   assert.ok(entry.disposed, 'compaction disposes the standing process')
   assert.equal(getPrewarmPool().has('conv-d'), false)
+  assert.equal(getResumeSessions().has('conv-d'), true)
 
   await runTurn('conv-e', TURN1, settings)
   const entryE = getPrewarmPool().get('conv-e')
@@ -311,8 +314,19 @@ function fakeSlowPrewarm(calls, { stallMs, resumeText = 'done', freshText = 'rec
   const chunks = await turn
   const elapsed = Date.now() - started
   assert.ok(elapsed < 1500, `the run must not wait out the dead transport (took ${elapsed}ms)`)
-  assert.equal(textOf(chunks), 'recovered', 'the run retried cold and still answered')
-  assert.equal(finishOf(chunks).reason.kind, 'stop')
+  // A killed transport ends the turn with an error; the old behaviour silently
+  // retried cold (fresh spawn + full replay + a NEW session id) — exactly the
+  // silent-replacement class this driver must never produce.
+  assert.equal(finishOf(chunks).reason.kind, 'error', 'the dead transport surfaces as an error, not a silent fresh fallback')
+  assert.equal(getResumeSessions().get('conv-killed'), 's1', 'the established Claude id survives the killed transport')
+  // The user re-sends: the turn resumes the SAME id (tail only), answers, and
+  // never spawns a fresh session.
+  const resentCalls = []
+  const recovery = await runTurn('conv-killed', TURN2, { ...settings, queryImpl: fakeQuery(resentCalls, { resultText: 'recovered' }) })
+  assert.equal(textOf(recovery), 'recovered')
+  assert.equal(finishOf(recovery).reason.kind, 'stop')
+  assert.equal(resentCalls.filter((c) => c.kind === 'fresh').length, 0, 'the re-sent turn resumed, never fresh')
+  assert.ok(resentCalls.every((c) => c.options.resume === 's1'), 'every spawn resumed the preserved Claude id')
   drainPool()
   getResumeSessions().delete('conv-killed')
 }

@@ -63,7 +63,6 @@ test('the draft mirrors the served settings, keeping the last value when a guard
       weeklyEnabled: true,
       weeklyPercent: '98',
       compaction: true,
-      endSession: false,
       contextEnabled: true,
       contextK: '400',
     },
@@ -74,7 +73,6 @@ test('the draft mirrors the served settings, keeping the last value when a guard
     weeklyEnabled: false,
     weeklyPercent: '98',
     compaction: true,
-    endSession: true,
     contextEnabled: false,
     contextK: '400',
   })
@@ -84,7 +82,6 @@ test('the draft mirrors the served settings, keeping the last value when a guard
     weeklyEnabled: true,
     weeklyPercent: '98',
     compaction: true,
-    endSession: true,
     contextEnabled: true,
     contextK: '250',
   })
@@ -111,7 +108,6 @@ test('saving turns the draft into the exact patch the route validates', () => {
         usageStopPercent: 85.5,
         weeklyStopPercent: 97,
         usageStopCompaction: true,
-        usageStopEndSession: false,
         compactAtTokens: 400000,
       },
     },
@@ -120,7 +116,7 @@ test('saving turns the draft into the exact patch the route validates', () => {
     plain(stopPatchFrom({ fiveHourEnabled: false, weeklyEnabled: false, compaction: true, endSession: true, contextEnabled: false })),
     {
       ok: true,
-      value: { usageStopPercent: false, weeklyStopPercent: false, usageStopCompaction: true, usageStopEndSession: true, compactAtTokens: 0 },
+      value: { usageStopPercent: false, weeklyStopPercent: false, usageStopCompaction: true, compactAtTokens: 0 },
     },
   )
   for (const percent of ['', '0', '101', 'abc']) {
@@ -152,4 +148,5 @@ test('the driver row registers a keyed Configure page after the dock meter', () 
   assert.equal(page.registration.key, exported.STOP_PAGE_KEY, 'the page must attach to the claude-driver row')
   assert.equal(typeof page.Component, 'function')
   assert.match(source, /claude-usage-stop\.json/, 'the page reads and writes the usage-stop route')
+  assert.doesNotMatch(source, /End the Claude session after compacting/, 'session deletion is not offered as a compaction policy')
 })

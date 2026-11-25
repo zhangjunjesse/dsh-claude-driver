@@ -305,7 +305,7 @@ test('usageStopCompaction:false consumes the request without compacting', async 
   usageGuard.reset()
 })
 
-test('a successful stop compaction ends the Claude session afterwards', async () => {
+test('a successful stop compaction preserves the Claude session even with the legacy end flag', async () => {
   usageGuard.reset()
   usageGuard.observe(snapshot(96), { sessionId: 's1', stopAtPercent: 95 })
   const calls = []
@@ -317,25 +317,8 @@ test('a successful stop compaction ends the Claude session afterwards', async ()
       return undefined
     },
   }
-  await compactStoppedSession(ctx, { sessionId: 's1', endSession: () => calls.push('end') }, {}, { retryDelayMs: 1 })
-  assert.deepEqual(calls, ['compact', 'end'], 'the session ends only after its compaction settled')
-  usageGuard.reset()
-})
-
-test('usageStopEndSession:false keeps the compacted Claude session', async () => {
-  usageGuard.reset()
-  usageGuard.observe(snapshot(96), { sessionId: 's1', stopAtPercent: 95 })
-  const calls = []
-  const ctx = {
-    logger: { info() {}, warn() {} },
-    get: (name) => {
-      if (name === 'agents') return { get: () => ({ id: 'a', session: { id: 's1' } }) }
-      if (name === 'compaction') return { compactNow: async () => calls.push('compact') }
-      return undefined
-    },
-  }
-  await compactStoppedSession(ctx, { sessionId: 's1', endSession: () => calls.push('end') }, { usageStopEndSession: false }, { retryDelayMs: 1 })
-  assert.deepEqual(calls, ['compact'])
+  await compactStoppedSession(ctx, { sessionId: 's1', endSession: () => calls.push('end') }, { usageStopEndSession: true }, { retryDelayMs: 1 })
+  assert.deepEqual(calls, ['compact'], 'stopping and compacting never replace the Claude session')
   usageGuard.reset()
 })
 
@@ -357,20 +340,22 @@ test('a failed compaction does not end the Claude session', async () => {
   usageGuard.reset()
 })
 
-test('the stop warns when its compaction cannot use Claude native /compact', async () => {
+test('the legacy nativeCompaction flag cannot select a non-native stop fallback', async () => {
   usageGuard.reset()
   usageGuard.observe(snapshot(96), { sessionId: 's1', stopAtPercent: 95 })
   const warns = []
+  let attempts = 0
   const ctx = {
     logger: { info() {}, warn: (message) => warns.push(String(message)) },
     get: (name) => {
       if (name === 'agents') return { get: () => ({ id: 'a', session: { id: 's1' } }) }
-      if (name === 'compaction') return { compactNow: async () => {} }
+      if (name === 'compaction') return { compactNow: async () => { attempts += 1 } }
       return undefined
     },
   }
   await compactStoppedSession(ctx, { sessionId: 's1' }, { nativeCompaction: false }, { retryDelayMs: 1 })
-  assert.match(warns.join('\n'), /native \/compact/, 'the fallback is named, not silently used')
+  assert.equal(attempts, 1)
+  assert.doesNotMatch(warns.join('\n'), /falls? back|one-shot/i)
   usageGuard.reset()
 })
 

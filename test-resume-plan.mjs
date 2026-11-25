@@ -53,11 +53,12 @@ sessions.set('dsh-1', 'sdk-session-abc')
   assert.ok(!plan.prompt.includes('q1'))
 }
 
-// --- planPrompt: empty tail (last message assistant) falls back to fresh ---
+// --- planPrompt: empty tail stays a resume and must fail before any query ---
 {
   const plan = planPrompt({ ...baseOptions, messages: [u('q1'), a('r1')] }, settings, sessions)
-  assert.equal(plan.mode, 'fresh')
-  assert.ok(!plan.prompt.includes('SYS-PROMPT'), 'system prompt rides Claude\'s system prompt (see test/dsh-context.test.mjs)')
+  assert.equal(plan.mode, 'resume')
+  assert.equal(plan.resumeId, 'sdk-session-abc')
+  assert.equal(plan.prompt, '')
 }
 
 // --- planPrompt: internal purposes never resume nor join the chain ---
@@ -68,11 +69,12 @@ for (const purpose of ['compaction', 'session-title']) {
   assert.ok(plan.prompt.includes('q1'), `${purpose} carries full history`)
 }
 
-// --- planPrompt: resumeChain=false disables everything ---
+// --- planPrompt: legacy resumeChain=false cannot replace an established id ---
 {
   const plan = planPrompt(baseOptions, { resumeChain: false }, sessions)
-  assert.equal(plan.mode, 'fresh')
-  assert.equal(plan.chainKey, undefined)
+  assert.equal(plan.mode, 'resume')
+  assert.equal(plan.resumeId, 'sdk-session-abc')
+  assert.equal(plan.chainKey, 'dsh-1')
 }
 
 // --- planPrompt: missing sessionId -> fresh, no chain ---
