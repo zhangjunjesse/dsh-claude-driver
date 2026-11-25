@@ -20,6 +20,7 @@ import {
   clearResumeOnCompaction,
   createClaudeFreshCommand,
   endClaudeSession,
+  getResumeSessions,
   planPrompt,
   rememberClaudeSession,
 } from '../lib/index.js'
@@ -175,12 +176,21 @@ test('ending the Claude session and /claude-fresh clear the persisted entry', ()
   const store = createResumeStore({ file })
   store.set('s1', entry())
   store.set('s2', entry({ claudeSessionId: 'claude-2' }))
-  const sessions = new Map([['s1', 'claude-1']])
-  assert.equal(endClaudeSession('s1', store), true)
-  assert.equal(store.get('s1'), undefined)
-  const command = createClaudeFreshCommand(sessions, new Map(), store)
-  sessions.set('s2', 'claude-2')
-  const result = command.handler({ agent: { session: { id: 's2' } } })
-  assert.equal(result.kind, 'success')
-  assert.equal(store.get('s2'), undefined)
+  // endClaudeSession and the command both drive the live session map.
+  const live = getResumeSessions()
+  live.set('s1', 'claude-1')
+  live.set('s2', 'claude-2')
+  try {
+    assert.equal(endClaudeSession('s1', store), true)
+    assert.equal(store.get('s1'), undefined)
+    assert.equal(live.has('s1'), false)
+    const command = createClaudeFreshCommand(live, new Map(), store)
+    const result = command.handler({ agent: { session: { id: 's2' } } })
+    assert.equal(result.kind, 'success')
+    assert.equal(store.get('s2'), undefined)
+    assert.equal(live.has('s2'), false)
+  } finally {
+    live.delete('s1')
+    live.delete('s2')
+  }
 })
