@@ -64,7 +64,13 @@ test('a corrupt or missing file reads as empty and is replaced on the next write
 })
 
 test('an unwritable store reports failure instead of throwing into the turn', () => {
-  const store = createResumeStore({ file: '/proc/dsh-cannot-write/resume.json' })
+  // A regular file where the store needs a directory: mkdir fails with ENOTDIR
+  // for any uid, on any filesystem. (A /proc path hung CI for 100s+ instead of
+  // failing, so the proof must not depend on a pseudo-filesystem.)
+  const { dir } = tempStore()
+  const blocker = join(dir, 'blocked')
+  writeFileSync(blocker, 'not a directory')
+  const store = createResumeStore({ file: join(blocker, RESUME_STORE_FILE) })
   assert.equal(store.set('s1', entry()), false)
   assert.equal(store.remove('s1'), false)
 })
