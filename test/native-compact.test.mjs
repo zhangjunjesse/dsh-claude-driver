@@ -152,7 +152,9 @@ test('a host restart hydrates the persisted Claude id before compacting', async 
     const isolated = await import(`../lib/index.js?native-restart=${Date.now()}`)
     const calls = []
     const chunks = []
-    for await (const chunk of isolated.streamClaudeChunks(ctx, compactionCall('dsh-restart'), { resumeChain: true, queryImpl: fakeClaude(calls) })) chunks.push(chunk)
+    // provider comes from apply()'s merged DEFAULTS in production; supply it
+    // like the host would when calling the stream directly.
+    for await (const chunk of isolated.streamClaudeChunks(ctx, compactionCall('dsh-restart'), { resumeChain: true, provider: 'claude-code', queryImpl: fakeClaude(calls) })) chunks.push(chunk)
     assert.equal(calls.length, 1)
     assert.equal(calls[0].prompt, '/compact')
     assert.equal(calls[0].options.resume, 'claude-persisted')
