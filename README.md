@@ -142,6 +142,26 @@ When the window resets the stop lifts by itself; a goal paused by the stop stays
 
 All of these knobs — both plan-window thresholds, native compaction, ending the session afterwards, and `compactAtTokens` — are editable from **Plugins → Claude Code driver → claude-driver → Configure**, without editing YAML or restarting DSH. The page saves to `$DSH_HOME/storages/claude-driver/usage-stop.json`, which wins over the YAML values; it also shows when the native compaction path is unavailable in the deployment.
 
+## Delegation to DSH subagents (`delegate`)
+
+A `claude-code` turn normally spawns subagents on Claude itself: the DSH `subagent` tool inherits the parent route, and explicit child models are only offered when the session's subagent model-selection allowlist is on. The driver therefore registers one DSH tool of its own, `delegate`, which Claude (and every other DSH agent) can call at will:
+
+- **It blocks and answers.** The call starts a fresh DSH child session and returns that child's final answer text. The child's intermediate steps stay in its own session; nothing has to be polled and no second turn is consumed on the parent.
+- **It picks a DSH model.** `model` takes `provider/model` or a bare model id advertised by a DSH provider. Omitted, the route chain is `deepseek-v4.1-flash`, then any other DeepSeek model, then anything available — so delegating is cheap by default instead of another Claude turn.
+- **It briefs like an intern.** The tool description tells Claude to write the child's prompt as a complete brief for a competent intern who cannot ask follow-ups: exact files and paths, the goal, what to read, what to change, the commands to run, the constraints, the required answer shape, and how to check the result.
+- **It inherits authority.** The child inherits the caller's sandbox, approval flow and working directory through DSH's subagent service, and appears as its own DSH session.
+
+Settings (profile patch or plugin config):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `delegateTool` | `true` | Register the `delegate` tool. `false` removes it from every agent in the profile. |
+| `delegateProvider` | `spawn` | Subagent backend. It must support child model selection (`agentOptions`), which the in-process `spawn` provider does. |
+| `delegateModels` | _(unset)_ | Ordered preference list for the child route, each entry `provider/model` or a bare model id; unset uses the DeepSeek-first chain. |
+| `delegateTimeoutMs` | `0` | Ceiling for one call. `0` waits for the child; on expiry the child is stopped and the call fails, so a stuck child cannot wedge the parent turn. |
+
+The tool is a normal DSH tool, so it crosses the MCP bridge and renders as a DSH tool card like any other. `delegate` does not replace `subagent`, and it does not consult the session's subagent model-selection allowlist: the point is to reach models that allowlist would not offer.
+
 ## Install
 
 Prerequisite: the `claude` CLI is installed and logged in (or the SDK's platform binary is present).
@@ -500,6 +520,10 @@ cd ~/.dsh/profiles/node_modules/dsh-claude-driver && npm i --no-save
 | `usageStopCompaction` | `true` | 停摆后是否用 Claude 自己的 `/compact` 压缩一次在线会话；压缩在 agent 进入 idle 时以 `/compact` 命令执行，会话里会出现可见的 `/compact` 卡片与压缩标记 |
 | `usageStopEndSession` | `true` | 压缩后结束这个 Claude Code 会话（清掉 resume 链与预热进程）：窗口重置后的下一回合从 DSH 的压缩历史开一个全新 Claude 会话 |
 | `compactAtTokens` | `0` | 上下文达到该 token 数（上一请求的 input + cache read + cache write）后，在下一回合结束、agent 进入 idle 时用 Claude 自己的 `/compact` 压缩在线会话（走 `/compact` 命令，会话里有可见的压缩标记），并保持同一 Claude 会话；`0` 关闭。没有原生压缩路径时只警告一次、不消耗摘要请求 |
+| `delegateTool` | `true` | 注册 `delegate` 工具：Claude 随时可以把一个完整任务交给全新的 DSH 子会话，并阻塞等待它的最终回答；子会话模型由 `model`（`provider/model` 或裸模型 id）指定 |
+| `delegateProvider` | `spawn` | `delegate` 使用的子代理后端；必须支持子会话模型选择（`agentOptions`），进程内 `spawn` 后端满足 |
+| `delegateModels` | _(unset)_ | 子会话路由的优先顺序（每项 `provider/model` 或裸模型 id），未设置时用内置的 DeepSeek 优先链（`deepseek-v4.1-flash` → 其他 DeepSeek → 其他可用模型） |
+| `delegateTimeoutMs` | `0` | 单次 `delegate` 调用的上限；`0` 一直等待子会话，超时会停止子会话并让调用失败，避免卡死父回合 |
 | `models` | _(unset)_ | 仅在需要固定/改名时设置；默认由 Claude Code 自己的 `supportedModels()` 提供名称（如 `Sonnet 5.5`）、版本与上下文窗口，新模型发布后自动出现 |
 | `modelRefreshMs` | `600000` | 成功发现后的缓存时长；到期自动刷新，新模型无需重启即出现 |
 | `modelRetryMs` | `30000` | 发现失败后的重试间隔（不会永久缓存失败结果） |
