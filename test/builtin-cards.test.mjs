@@ -3,7 +3,7 @@
 // shows its Bash/Read/Edit/... cards, instead of text lines in the thinking block.
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { dshCardFor, streamClaudeChunks } from '../lib/index.js'
+import { dshCardFor, getResumeSessions, streamClaudeChunks } from '../lib/index.js'
 
 function mockSession() {
   const events = []
@@ -169,7 +169,14 @@ for (const purpose of ['session-title', 'compaction']) {
     const agent = { id: 'a', session: mockSession() }
     const ctx = { logger: { info() {}, warn() {} }, get: (n) => (n === 'tools' ? { execute: async () => ({ content: [] }) } : n === 'agents' ? { currentInitiator: () => agent } : undefined) }
     const tools = [{ name: 'bash', description: 'b', parameters: { type: 'object', properties: {} } }]
-    for await (const _ of streamClaudeChunks(ctx, { ...opts, tools, purpose, sessionId: 'dsh-y' }, { resumeChain: false, queryImpl, nativeCompaction: false })) void _
+    // A compaction call is native-only: it needs an established Claude session
+    // to /compact; without one it fails closed and never reaches the CLI.
+    if (purpose === 'compaction') getResumeSessions().set('dsh-y', 'c-internal')
+    try {
+      for await (const _ of streamClaudeChunks(ctx, { ...opts, tools, purpose, sessionId: 'dsh-y' }, { resumeChain: false, queryImpl, nativeCompaction: false })) void _
+    } finally {
+      if (purpose === 'compaction') getResumeSessions().delete('dsh-y')
+    }
     assert.equal(seen.mcpServers, undefined, 'no DSH tool bridge')
     assert.deepEqual(seen.tools, [], 'no Claude built-in tools')
     assert.equal(seen.canUseTool, undefined)

@@ -54,7 +54,9 @@ test('an auth failure on a resumed chain is not retried as a fresh session', asy
   const { getResumeSessions } = await import('../lib/index.js')
   getResumeSessions().set('dsh-auth', 'claude-auth')
   let calls = 0
-  const queryImpl = () => { calls += 1; return (async function* () { for (const e of apiError('authentication_failed', 'Failed to authenticate')) yield e })() }
+  // The fake CLI reports the resumed session's id, like the real one does.
+  const events = apiError('authentication_failed', 'Failed to authenticate').map((e) => ({ ...e, session_id: 'claude-auth' }))
+  const queryImpl = () => { calls += 1; return (async function* () { for (const e of events) yield e })() }
   const chunks = []
   for await (const c of streamClaudeChunks(ctx, { ...opts, sessionId: 'dsh-auth', messages: [{ role: 'user', content: [{ type: 'text', text: 'a' }] }, { role: 'assistant', content: [{ type: 'text', text: 'b' }] }, { role: 'user', content: [{ type: 'text', text: 'c' }] }] }, { resumeChain: true, autoLogin: false, queryImpl })) chunks.push(c)
   assert.equal(calls, 1, 'auth is not a resume problem')

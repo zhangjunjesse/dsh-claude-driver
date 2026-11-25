@@ -43,7 +43,7 @@ You (DSH UI)  ->  DSH session  ->  llm/stream route "claude-code"
 
 ### Limits to know about
 
-- Two agent loops are involved (DSH's and Claude Code's). Compaction is handled by dropping the Claude resume chain so the next turn restarts over the compacted history; `/claude-fresh` does the same on demand.
+- Two agent loops are involved (DSH's and Claude Code's). Compaction is Claude's own `/compact` on the live session and the Claude session id is preserved; `/claude-fresh` is the only way to reset the chain.
 - If your outbound IP is a datacenter IP, Anthropic answers 403; set `proxy` in your own profile patch.
 - You need the `claude` CLI installed and logged in (or the SDK's platform binary present). Linux is the supported platform.
 
@@ -120,7 +120,7 @@ Every DSH feature and how it reaches Claude Code (and back) is listed in [docs/f
 
 ## Compaction
 
-DSH's `/compact` and its automatic compaction both compact the **live Claude Code session** with Claude's own `/compact`, on the same Claude session id. Claude's summary becomes the summary DSH records, so DSH and Claude hold the same condensed context, and the next turn simply resumes that session. If Claude cannot compact (no live session yet, an error, a stall) the driver falls back to a one-shot summary and the next turn starts a fresh Claude session from DSH's compacted history. Set `nativeCompaction: false` to always use the fallback.
+DSH's `/compact` and its automatic compaction both compact the **live Claude Code session** with Claude's own `/compact`, on the same Claude session id. Claude's summary becomes the summary DSH records, so DSH and Claude hold the same condensed context, and the next turn simply resumes that session. Compaction is native-only: if there is no established Claude session to compact, or Claude's `/compact` fails (an error, a stall, or the CLI reporting a different session id), the request fails with a `NATIVE_COMPACTION` error and the session is left unchanged — the driver never spends a one-shot summary and never starts a fresh Claude session on its own. `nativeCompaction: false` is accepted but ignored.
 
 DSH may ask for a summary more than once without a user turn in between (it retries when a summary is not small enough). Claude is compacted once; repeat requests reuse the same summary until the session runs another turn.
 
@@ -128,7 +128,7 @@ DSH may ask for a summary more than once without a user turn in between (it retr
 
 The DSH-session → Claude-session mapping is persisted to `$DSH_HOME/storages/claude-driver/resume.json`, so restarting DSH resumes the existing Claude session instead of booting a new one. That difference is expensive: a fresh boot replays the whole rendered history as one prompt, a cold cache prefix, so every prompt token is billed as a cache write (1.25×). Measured on a 355k-token session, one restart cost 355,389 cache-write tokens and 0 cache reads; the resumed turn would have sent only the new tail and read the rest from cache.
 
-An entry is used only when the session still routes to `claude-code` and runs in the same working directory. It is dropped by a DSH compaction that Claude did not perform, by `/claude-fresh`, by the plan-window stop ending the session, by a switch to another provider, and by a failed resume (which retries fresh). The file is pruned to the 100 newest sessions and is safe to delete; a lost entry only costs one cold replay.
+An entry is used only when the session still routes to the same provider (current Claude Code resumes a session id from any working directory). An established id is never silently replaced: a compaction keeps it, a store write failure or an unreadable store is reported instead of swallowed, the file is never pruned out from under a live session, and a resumed turn that reports a different session id fails with the mapping intact. The entry is dropped only by `/claude-fresh` (or its programmatic twin, the `endClaudeSession` helper). A session that ran turns on another provider in between keeps its id but refuses further Claude turns (`CLAUDE_SESSION_RESUME`) until `/claude-fresh`, because resuming would silently skip that history. The file is safe to delete; a lost entry only costs one cold replay.
 
 ## Plan-window stop (5-hour and weekly)
 
@@ -137,16 +137,15 @@ The Claude plan windows are account-wide, so one long goal turn can consume the 
 1. finishes the tool call in flight and keeps its result, then ends the turn at that boundary with a visible notice (never mid-write, never as an error);
 2. pauses the session's active goal, so no further round starts against the stopped guard;
 3. compacts the live Claude session once with Claude's own `/compact` at the agent's next idle transition, so resuming later does not replay the full history and the transcript shows it: a `/compact` command card plus the compaction marker carrying Claude's summary;
-4. ends that Claude session after the compaction (`usageStopEndSession`, default `true`): the resume chain and any prewarmed process are dropped, so after the window resets the next turn starts a fresh Claude session over DSH's compacted history instead of resuming the one that burned the window;
-5. refuses every new `claude-code` turn in the host (main model and subagents) until the window resets.
+4. refuses every new `claude-code` turn in the host (main model and subagents) until the window resets.
 
-When the window resets the stop lifts by itself; a goal paused by the stop stays paused until you resume it. Internal maintenance calls (session title, compaction) still run. Set `usageStopPercent: false` (or `weeklyStopPercent: false`) to disable one guard, `usageStopCompaction: false` to stop without spending the extra compaction request, or `usageStopEndSession: false` to keep resuming the compacted Claude session. Because the weekly window resets days later, a weekly stop can keep Claude paused for that long — that is the point of a hard weekly guard.
+The stop **keeps** the compacted Claude session: the plan window is account-wide, so ending the session cannot reset the quota — a fresh session after the reset would only pay another cold replay. When the window resets the stop lifts by itself; a goal paused by the stop stays paused until you resume it, and resuming the goal continues on the same Claude session id. Internal maintenance calls (session title, compaction) still run. Set `usageStopPercent: false` (or `weeklyStopPercent: false`) to disable one guard, or `usageStopCompaction: false` to stop without spending the extra compaction request. `usageStopEndSession` is a legacy no-op (accepted in config and the settings file, ignored). Because the weekly window resets days later, a weekly stop can keep Claude paused that long — that is the point of a hard weekly guard.
 
 ## Native context autocompaction
 
-`compactAtTokens` (default `0`, off) compacts the live Claude session with Claude's own `/compact` when a finished turn reports a context of at least that many tokens (the final request's input + cache read + cache write, the same number the token meter shows). The compaction runs at the following turn end, at the agent's first idle transition (the compaction service refuses a running agent), and goes through the `/compact` command so the transcript shows the cue. It keeps the same Claude session, and fires once per crossing: the watch re-arms only after a turn reports a context below the threshold, so a summary plus a large tail cannot loop. Without the native path (`nativeCompaction: false` or `resumeChain: false`) the option warns once per crossing and spends nothing, leaving automatic compaction to DSH.
+`compactAtTokens` (default `0`, off) compacts the live Claude session with Claude's own `/compact` when a finished turn reports a context of at least that many tokens (the final request's input + cache read + cache write, the same number the token meter shows). The compaction runs at the following turn end, at the agent's first idle transition (the compaction service refuses a running agent), and goes through the `/compact` command so the transcript shows the cue. It keeps the same Claude session, and fires once per crossing: the watch re-arms only after a turn reports a context below the threshold, so a summary plus a large tail cannot loop. A failed compaction re-arms the watch so a later turn retries.
 
-All of these knobs — both plan-window thresholds, native compaction, ending the session afterwards, and `compactAtTokens` — are editable from **Plugins → Claude Code driver → claude-driver → Configure**, without editing YAML or restarting DSH. The page saves to `$DSH_HOME/storages/claude-driver/usage-stop.json`, which wins over the YAML values; it also shows when the native compaction path is unavailable in the deployment.
+All of these knobs — both plan-window thresholds, the stop compaction, and `compactAtTokens` — are editable from **Plugins → Claude Code driver → claude-driver → Configure**, without editing YAML or restarting DSH. The page saves to `$DSH_HOME/storages/claude-driver/usage-stop.json`, which wins over the YAML values.
 
 ## Delegation to DSH subagents (`delegate`)
 
@@ -211,7 +210,7 @@ DSH（DeepSeek Harness）宿主插件：让 DSH 会话把**本地 Claude Code �
 | 内置工具进度 | Claude 内置工具（Bash/Edit…）以文本进度旁白兜底 |
 | subagent provider | 填上官方预留的 `claude-code` subagent 占位缝（`subagent_claude_code` 工具） |
 | 跨模型历史兼容 | 补写配对 assistant tool-call 事件，切回 deepseek 不报 400 |
-| resume 链治理 | 模型带 contextWindow（启用 DSH 自动压缩）+ 压缩后清链 + `/claude-fresh` 命令 + 切换 provider / 换工作目录 / resume 失败时清链 |
+| resume 链治理 | 模型带 contextWindow（启用 DSH 自动压缩）+ 原生压缩保会话 + `/claude-fresh` 显式重置 + 切换 provider 后拒绝续接（需 `/claude-fresh`）+ 会话 id 不匹配/失败时报错不清链 |
 | 登录过期自愈 | 回合因 Claude 登录过期/缺失失败（`AUTH`）时，自动拉起官方 `claude auth login`，把登录 URL 显示在思考区，登录完成后自动重试该回合**一次**；`/claude-login [code\|status\|cancel]` 手动入口；`autoLogin: false` 关闭自动流程 |
 | 后台任务保活 | `waitForBackgroundTasks`：持有本步直到 Claude Code 自己的后台任务跑完，否则它们会在回合结束后被杀 |
 | 子代理抢救 | `harvestOrphanedSubagents`：随进程一起死掉的子代理，下一轮从磁盘 transcript 捞回它们的产出 |
@@ -520,12 +519,12 @@ cd ~/.dsh/profiles/node_modules/dsh-claude-driver && npm i --no-save
 | `builtinToolCards` | `true` | Claude Code 内置工具（Bash/Read/Edit/Write/Grep/Glob/WebFetch/WebSearch…）渲染为 DSH 原生工具卡片，而不是思考块里的文字行；`false` 恢复文字旁白 |
 | `autoInstallCli` | `true` | 本机没有可用的 Claude Code CLI 时才自动安装（先检查：配置路径 → SDK 自带 → 私有安装 → `~/.local/bin` → PATH）；`false` 只报告不安装 |
 | `preferDshTools` | `true` | DSH 提供同类功能时（计划模式、定时、待办、网页搜索/抓取），隐藏 Claude Code 的重复内置工具（`EnterPlanMode`/`ExitPlanMode`、`Cron*`、`TodoWrite`、`WebSearch`/`WebFetch`），以 DSH 为准 |
-| `nativeCompaction` | `true` | DSH 压缩时让 Claude Code 用自己的 `/compact` 压缩同一会话（同一 session id），并把 Claude 的摘要作为 DSH 摘要；失败时回落为一次性摘要 + 新会话 |
+| `nativeCompaction` | _(已忽略)_ | 兼容保留的旧开关：压缩现在**只**走 Claude 自己的 `/compact`（同一 session id），失败时报错（`NATIVE_COMPACTION`）、绝不清链或另开会话；设 `false` 无效果 |
 | `usageStopPercent` | `95` | 5 小时套餐窗口用到此百分比时，当前回合在安全边界停下（保留已完成的工具结果），到窗口重置前拒绝所有 Claude 回合（含子代理）；`false` 关闭 |
 | `weeklyStopPercent` | `98` | 每周套餐窗口用到此百分比时执行同样的停摆（窗口按天重置，停摆可能持续数天）；`false` 关闭 |
 | `usageStopCompaction` | `true` | 停摆后是否用 Claude 自己的 `/compact` 压缩一次在线会话；压缩在 agent 进入 idle 时以 `/compact` 命令执行，会话里会出现可见的 `/compact` 卡片与压缩标记 |
-| `usageStopEndSession` | `true` | 压缩后结束这个 Claude Code 会话（清掉 resume 链与预热进程）：窗口重置后的下一回合从 DSH 的压缩历史开一个全新 Claude 会话 |
-| `compactAtTokens` | `0` | 上下文达到该 token 数（上一请求的 input + cache read + cache write）后，在下一回合结束、agent 进入 idle 时用 Claude 自己的 `/compact` 压缩在线会话（走 `/compact` 命令，会话里有可见的压缩标记），并保持同一 Claude 会话；`0` 关闭。没有原生压缩路径时只警告一次、不消耗摘要请求 |
+| `usageStopEndSession` | _(已忽略)_ | 兼容保留的旧开关：停摆压缩**保留**同一 Claude 会话（套餐窗口按账号计，结束会话无法重置配额，只会多付一次冷启动）；设 `true`/`false` 均无效果 |
+| `compactAtTokens` | `0` | 上下文达到该 token 数（上一请求的 input + cache read + cache write）后，在下一回合结束、agent 进入 idle 时用 Claude 自己的 `/compact` 压缩在线会话（走 `/compact` 命令，会话里有可见的压缩标记），并保持同一 Claude 会话；`0` 关闭。压缩失败会重新武装，下一回合再试 |
 | `delegateTool` | `true` | 注册 `delegate` 工具：Claude 随时可以把一个完整任务交给全新的 DSH 子会话，并阻塞等待它的最终回答；子会话模型由 `model`（`provider/model` 或裸模型 id）指定 |
 | `delegateProvider` | `spawn` | `delegate` 使用的子代理后端；必须支持子会话模型选择（`agentOptions`），进程内 `spawn` 后端满足 |
 | `delegateModels` | _(unset)_ | 子会话路由的优先顺序（每项 `provider/model` 或裸模型 id），未设置时用内置的 DeepSeek 优先链（`deepseek-v4.1-flash` → 其他 DeepSeek → 其他可用模型） |

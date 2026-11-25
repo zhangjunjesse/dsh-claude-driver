@@ -90,7 +90,7 @@ test('e2e: ending the Claude session after a native compaction starts a fresh on
   assert.equal(compacted.at(-1).reason.kind, 'stop')
   const summary = textOf(compacted)
   assert.match(summary, /PELICAN-42/, 'the compaction summary is Claude\'s own')
-  assert.equal(getResumeSessions().get(sessionId), first, 'native compaction keeps the chain until the stop ends it')
+  assert.equal(getResumeSessions().get(sessionId), first, 'native compaction keeps the chain; only the explicit reset ends it')
 
   assert.equal(endClaudeSession(sessionId), true)
   assert.equal(getResumeSessions().get(sessionId), undefined, 'the resume chain is gone')

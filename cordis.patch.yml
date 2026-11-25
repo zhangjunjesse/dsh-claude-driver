@@ -17,9 +17,8 @@
       #   model: sonnet               # Claude model alias or full id
       #   maxTurns: 100
       #   usageStopPercent: 95         # stop all Claude turns at 95% of the 5-hour window
-      #   weeklyStopPercent: 98        # same guard at 98% of the weekly window; false disables it
-      #   usageStopCompaction: true    # compact the live Claude session once at that stop
-      #   usageStopEndSession: true    # then end it: the next turn starts a fresh Claude session
+      #   weeklyStopPercent: 98         # same guard at 98% of the weekly window; false disables it
+      #   usageStopCompaction: true    # compact the live Claude session once at that stop (same session id)
       #   compactAtTokens: 0           # natively /compact once the context reaches N tokens; 0 = off
       #   nice: 19                    # lowest CPU priority for every Claude CLI process
       #   permissionMode: acceptEdits
