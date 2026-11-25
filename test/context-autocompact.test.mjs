@@ -146,8 +146,8 @@ test('without the native path it warns once per crossing and spends nothing', as
     get: (name) => (name === 'agents' ? { get: () => agent } : name === 'compaction' ? { compactNow: async () => { calls += 1 } } : undefined),
   }
   contextWatch.note('s1', 500_000, 400_000)
-  assert.equal(await compactContextIfDue(ctx, { sessionId: 's1' }, { compactAtTokens: 400_000, nativeCompaction: false }), false)
-  assert.equal(await compactContextIfDue(ctx, { sessionId: 's1' }, { compactAtTokens: 400_000, nativeCompaction: false }), false)
+  assert.equal(await compactContextIfDue(ctx, { sessionId: 's1' }, { compactAtTokens: 400_000, resumeChain: false }), false)
+  assert.equal(await compactContextIfDue(ctx, { sessionId: 's1' }, { compactAtTokens: 400_000, resumeChain: false }), false)
   assert.equal(calls, 0)
   assert.equal(warnings.length, 1, 'one warning per crossing, not one per turn')
   assert.match(warnings[0], /native/i)

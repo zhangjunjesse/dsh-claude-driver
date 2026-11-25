@@ -62,3 +62,24 @@ test('an auth failure on a resumed chain is not retried as a fresh session', asy
   assert.equal(chunks.at(-1).reason.failure.code, 'AUTH')
   getResumeSessions().delete('dsh-auth')
 })
+
+test('a failed resume never retries fresh or discards the Claude session id', async () => {
+  const { getResumeSessions } = await import('../lib/index.js')
+  getResumeSessions().set('dsh-stale', 'claude-stale')
+  const calls = []
+  const queryImpl = ({ options }) => {
+    calls.push(options)
+    return (async function* () {
+      yield { type: 'system', subtype: 'init', session_id: 'claude-stale' }
+      yield { type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['resume transport failed'], session_id: 'claude-stale', usage: { input_tokens: 0, output_tokens: 0 } }
+    })()
+  }
+  const chunks = []
+  const options = { ...opts, sessionId: 'dsh-stale', messages: [{ role: 'user', content: [{ type: 'text', text: 'a' }] }, { role: 'assistant', content: [{ type: 'text', text: 'b' }] }, { role: 'user', content: [{ type: 'text', text: 'c' }] }] }
+  for await (const c of streamClaudeChunks(ctx, options, { resumeChain: true, autoLogin: false, queryImpl })) chunks.push(c)
+  assert.equal(calls.length, 1, 'no silent fresh-session retry')
+  assert.equal(calls[0].resume, 'claude-stale')
+  assert.equal(getResumeSessions().get('dsh-stale'), 'claude-stale')
+  assert.equal(chunks.at(-1).reason.kind, 'error')
+  getResumeSessions().delete('dsh-stale')
+})

@@ -53,7 +53,7 @@ test('the store starts with no overrides so the YAML config still decides', () =
     usageStopPercent: 80,
     weeklyStopPercent: 98,
     usageStopCompaction: false,
-    usageStopEndSession: true,
+    usageStopEndSession: false,
     compactAtTokens: 400000,
   })
 })

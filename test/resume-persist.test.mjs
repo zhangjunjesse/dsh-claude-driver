@@ -144,21 +144,21 @@ test('remembering a session persists it; forgetting it drops the file entry', ()
   assert.equal(rememberClaudeSession({ sessionId: 's2', claudeSessionId: '', sessions, store }), false)
 })
 
-test('a DSH compaction that Claude did not perform drops the persisted entry too', () => {
+test('a compaction event preserves the persisted Claude session entry', () => {
   const { file } = tempStore()
   const store = createResumeStore({ file })
   store.set('s1', entry())
   const sessions = new Map([['s1', 'claude-1']])
   const dropped = clearResumeOnCompaction(
     { id: 's1' },
-    { type: 'compaction/summary', data: { summary: [{ type: 'text', text: 'a DSH one-shot summary' }] } },
+    { type: 'compaction/summary', data: { summary: [{ type: 'text', text: 'a compaction summary' }] } },
     sessions,
     new Map(),
     store,
   )
-  assert.equal(dropped, true)
-  assert.equal(sessions.has('s1'), false)
-  assert.equal(store.get('s1'), undefined)
+  assert.equal(dropped, false)
+  assert.equal(sessions.get('s1'), 'claude-1')
+  assert.equal(store.get('s1')?.claudeSessionId, 'claude-1')
 })
 
 test('a non-compaction event and a nameless session never touch the store', () => {
