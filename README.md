@@ -145,6 +145,8 @@ The stop **keeps** the compacted Claude session: the plan window is account-wide
 
 `compactAtTokens` (default `0`, off) compacts the live Claude session with Claude's own `/compact` when a finished turn reports a context of at least that many tokens (the final request's input + cache read + cache write, the same number the token meter shows). The compaction runs at the following turn end, at the agent's first idle transition (the compaction service refuses a running agent), and goes through the `/compact` command so the transcript shows the cue. It keeps the same Claude session, and fires once per crossing: the watch re-arms only after a turn reports a context below the threshold, so a summary plus a large tail cannot loop. A failed compaction re-arms the watch so a later turn retries.
 
+Inside a long turn (one Claude run of many requests, as a goal turn is) no turn end arrives, so the driver also starts Claude with `CLAUDE_CODE_AUTO_COMPACT_WINDOW` = threshold + 13k: Claude's own auto-compact then fires mid-run at about the threshold. Claude clamps that window to at least 100k, so thresholds under ~87k compact mid-run at ~87k. A `CLAUDE_CODE_AUTO_COMPACT_WINDOW` already in the host env wins. A changed threshold reaches a prewarmed process on its next spawn.
+
 All of these knobs — both plan-window thresholds, the stop compaction, and `compactAtTokens` — are editable from **Plugins → Claude Code driver → claude-driver → Configure**, without editing YAML or restarting DSH. The page saves to `$DSH_HOME/storages/claude-driver/usage-stop.json`, which wins over the YAML values.
 
 ## Delegation to DSH subagents (`delegate`)

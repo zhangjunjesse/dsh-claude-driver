@@ -12,7 +12,7 @@ import {
   MIN_CONTEXT_COMPACT_TOKENS,
   normalizeCompactAtTokens,
 } from '../lib/context-autocompact.js'
-import { streamClaudeChunks } from '../lib/index.js'
+import { buildSdkOptions, streamClaudeChunks } from '../lib/index.js'
 import { runNativeCompaction } from '../lib/native-compact.js'
 import { usageGuard } from '../lib/usage-guard.js'
 
@@ -225,4 +225,38 @@ test('native compaction hands its post-compaction token count back to the watch'
   })
   assert.equal(result.summary, 'condensed')
   assert.deepEqual(contextWatch.get('native-s1'), { tokens: 12000, armed: false })
+})
+
+// A goal turn can be ONE Claude run of hundreds of requests. The turn-end watch
+// never sees it end, so Claude itself must compact mid-run at the threshold:
+// its auto-compact fires at CLAUDE_CODE_AUTO_COMPACT_WINDOW - 13k, min window 100k.
+// (session-fcd343f8: compactAtTokens 256k, one run grew past 300k uncompacted.)
+const sdkEnv = (settings, hostEnv) => {
+  const saved = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW
+  if (hostEnv === undefined) delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW
+  else process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = hostEnv
+  try {
+    return buildSdkOptions({ get: () => undefined, logger: { info() {}, warn() {} } }, opts, { model: 'sonnet', ...settings }, { controller: new AbortController(), model: 'sonnet' }).env
+  } finally {
+    if (saved === undefined) delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW
+    else process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = saved
+  }
+}
+
+test('compactAtTokens makes Claude compact mid-run at the threshold', () => {
+  assert.equal(sdkEnv({ compactAtTokens: 256_000 }).CLAUDE_CODE_AUTO_COMPACT_WINDOW, '269000')
+})
+
+test('a threshold under the CLI minimum window asks for the minimum, not an invalid size', () => {
+  assert.equal(sdkEnv({ compactAtTokens: 50_000 }).CLAUDE_CODE_AUTO_COMPACT_WINDOW, '100000')
+})
+
+test('no threshold, or no native path, leaves Claude its own window', () => {
+  assert.equal(sdkEnv({ compactAtTokens: 0 }).CLAUDE_CODE_AUTO_COMPACT_WINDOW, undefined)
+  assert.equal(sdkEnv({ compactAtTokens: 256_000, nativeCompaction: false }).CLAUDE_CODE_AUTO_COMPACT_WINDOW, undefined)
+  assert.equal(sdkEnv({ compactAtTokens: 256_000, resumeChain: false }).CLAUDE_CODE_AUTO_COMPACT_WINDOW, undefined)
+})
+
+test('a window the user set in the host env wins', () => {
+  assert.equal(sdkEnv({ compactAtTokens: 256_000 }, '500000').CLAUDE_CODE_AUTO_COMPACT_WINDOW, '500000')
 })

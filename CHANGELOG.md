@@ -5,6 +5,7 @@
 ## Unreleased
 
 ### Fixed
+- **`compactAtTokens` never fired inside a long turn.** The watch reads the context only from a finished Claude run, and a goal turn can be one run of hundreds of requests: `session-fcd343f8` (threshold 256k, 1M window) grew past 300k in a single run without compacting. The driver now also sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW` to the threshold + 13k (Claude's summary buffer; at least Claude's 100k minimum), so Claude's own auto-compact fires mid-run at the threshold. A window already set in the host env wins; off when native compaction is unavailable.
 - **An established Claude session id is never silently replaced.** The 2026-11-25 15:24 incident in `session-9f2f1d6b` looked like a session-id loss; the transcript (`7ce92456…`) shows native `/compact` ran on the same id (539,365 → 4,599 tokens) and the next goal round resumed it — the usage jump was the compaction request itself (Opus cache writes 486,735 → 1,040,373 across it). But auditing that path exposed five ways the driver COULD silently replace or drop the id, all now closed:
   - DSH's compaction call fell back to a one-shot summary + fresh Claude session when no id existed or native `/compact` failed. Compaction is now native-only and fails closed with `NATIVE_COMPACTION`; `nativeCompaction: false` is accepted and ignored.
   - A compaction after a host restart compacted nothing: hydration excluded internal purposes, so the persisted id was invisible. Compaction calls now hydrate too (only the session-title probe stays off the chain).
